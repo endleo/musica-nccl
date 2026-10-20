@@ -79,8 +79,10 @@ compile() {
         -DCMAKE_CUDA_COMPILER="$CUDA_HOME/bin/nvcc" -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH"
     cmake --build ncclsee-cpp/build --parallel "$jobs"
 
+    # bindgen (clang-sys) would take the libclang with the highest version anywhere on the system (on MUSICA an
+    # incomplete /usr/lib64/llvm21, which lacks libLLVM); LIBCLANG_PATH restricts it to the loaded LLVM module.
     # --locked: fail instead of resolving other crate versions than in Cargo.lock
-    (cd CoMMA && "$CARGO_HOME/bin/cargo" build --release --locked --jobs "$jobs")
+    (cd CoMMA && LIBCLANG_PATH="$(llvm-config --libdir)" "$CARGO_HOME/bin/cargo" build --release --locked --jobs "$jobs")
 
     ls -l "$NCCL_TESTS_BIN"/{all_reduce,broadcast}_perf "$NCCLBENCH_BIN" "$COMMA_PLUGIN" "$NCCLSEE_PLUGIN"
 }
