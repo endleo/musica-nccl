@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs one benchmark process with a profiler plugin; started by the launcher once per rank (see run.sbatch):
+# Runs one benchmark process with a profiler plugin; started by the launcher once per rank (see experiment.sh):
 #   profiled.sh <profiler> <output directory> <benchmark command...>
 # Every node writes into <output directory>/<hostname>, since CoMMA's file names (latency-<pid>.txt) are
 # only unique per node.

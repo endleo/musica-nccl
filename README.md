@@ -1,26 +1,31 @@
 # musica-nccl
 
 The NCCL benchmark vs. profiler experiment of the Chameleon project (`chameleon-nccl`), on the MUSICA HPC
-cluster: run nccl-tests and lib-ncclbench once per NCCL profiler plugin (CoMMA, NCCL Inspector, ncclsee) and
+cluster: run nccl-tests and lib-ncclbench once per NCCL profiler plugin (CoMMA, ncclsee; no Inspector, see below) and
 compare the latencies the profilers report with the times the benchmarks measure.
 
-CUDA, NCCL and MPI come from the cluster's modules; the benchmarks and profiler plugins are built from source
-(same versions as on Chameleon). The experiment is a Slurm array job; the analysis runs locally.
+CUDA, NCCL (2.27.7) and MPI come from the cluster's modules; the benchmarks and profiler plugins are built from
+source (same versions as on Chameleon). The experiments are Slurm array jobs; the analysis runs locally.
+
+**No NCCL Inspector:** NCCL 2.27 loads profiler plugins up to API v4; the Inspector only implements v5 (and only
+exists since NCCL 2.29.7). CoMMA and ncclsee use v4 and work.
 
 ## Layout
 
 ```
-config.sh             settings for build and run: modules (TODO), GPU arch (TODO), versions, paths,
-                      benchmark parameters, profiler environment
+config.sh             shared settings: modules (TODO), GPU arch (TODO), versions, paths, profiler environment
 build.sh              clones and builds everything into build/
-run.sbatch            the experiment (one iteration per array task)
+experiments/          one Slurm batch file per experiment, with its parameters (profilers, tests, sizes, ...)
+  full.sbatch         the Chameleon experiment: CoMMA + ncclsee, 8 B - 1 GiB, 3 iterations
+  quick.sbatch        setup check: ncclsee only, 8 B - 1 MiB, 1 iteration (< 10 min)
+experiment.sh         shared part of the experiments (run every test once per profiler, job info, packing)
 profiled.sh           wrapper started per rank: sets the profiler environment, then runs the benchmark
 fetch.sh              copies results/ and logs/ from the cluster into a local clone (rsync over ssh)
 analysis/
   analyze.py          plots and tables of a run (the evaluation cells of the Chameleon notebook)
   profiler_results.py parsing of benchmark and profiler outputs (copied from the Chameleon project)
 files/comma/Cargo.lock  pinned crate versions for the CoMMA build (its repo has none)
-results/<job>/<NN>/   output of each array task
+results/<experiment>/<job>/<NN>/   output of each array task
 logs/                 Slurm job output (not in git)
 ```
 
@@ -30,8 +35,8 @@ Fill in the TODOs:
 
 - `config.sh`: `module load` lines in `load_modules` (CUDA, NCCL, MPI, cmake; clang/libclang and protobuf for
   CoMMA), `CUDA_ARCH`; check that `NCCL_HOME`/`CUDA_HOME`/`MPI_HOME` are found (`build.sh compile` prints them)
-  and that `NCCL_TAG` matches the module's NCCL version
-- `run.sbatch` and `build.sh`: `#SBATCH` partition, account, GPU request; maybe `--time`
+  and that `NCCL_TAG` matches the module's NCCL version (`build.sh` and the experiments warn if not)
+- `experiments/*.sbatch` and `build.sh`: `#SBATCH` partition, account, GPU request (all 4 GPUs per node); maybe `--time`
 
 ## Usage
 
@@ -40,27 +45,39 @@ On the cluster (from the repository root, everything relative to it):
 ```sh
 git clone <this repo> musica-nccl && cd musica-nccl
 ./build.sh                  # or: ./build.sh fetch && sbatch build.sh compile
-sbatch run.sbatch           # 3 iterations, one after another; --array=1-5%1 for more
+sbatch experiments/quick.sbatch
+sbatch experiments/full.sbatch
 ```
 
 Locally:
 
 ```sh
 ./fetch.sh                  # default remote musica:musica-nccl (ssh config entry "musica")
-uv run analysis/analyze.py  # newest run; or: uv run analysis/analyze.py results/<job>
+uv run analysis/analyze.py  # newest run; or: uv run analysis/analyze.py results/<experiment>/<job>
 ```
 
-## Experiment
+## Experiments
 
-Per array task (= iteration, on `--nodes=2` nodes with one rank and GPU each, as on Chameleon), for every
-profiler: nccl-tests `all_reduce_perf` / `broadcast_perf` (`-b 8 -e 1G -f 2 -g 1`) and lib-ncclbench
-`ncclAllReduce` / `ncclBroadcast` (8 B - 1 GiB, 5 warmups, 50 blocking iterations), with
-`NCCL_ALLGATHERV_ENABLE=0` (workaround for the NCCL broadcast profiler bug, see the Chameleon project).
+An experiment runs every test once per profiler: nccl-tests `all_reduce_perf` / `broadcast_perf` and
+lib-ncclbench `ncclAllReduce` / `ncclBroadcast`, on 2 nodes with 4 ranks each (one per GPU).
+
+Iterations are Slurm array tasks: `#SBATCH --array=1-3%1` in `full.sbatch` submits the experiment as 3
+separate tasks (iterations 01, 02, 03), each running the whole experiment (all profilers and tests) on the nodes it
+gets; `%1` lets only one of them run at a time. Other counts on the command line, e.g.
+`sbatch --array=1-5%1 experiments/full.sbatch`. This is the counterpart of the repeated `run_benchmark` calls with
+fresh servers on Chameleon.
+
+A new experiment is a copy of one of the batch files with other parameters and another `EXPERIMENT` name (the
+results folder); `analyze.py` takes the profilers, tests, sizes and ncclbench settings from the results.
 
 Differences to Chameleon:
 
-- NCCL from the module instead of built from source; the NCCL checkout in `build/nccl` is only used to build
-  the Inspector and as headers for CoMMA
+- NCCL 2.27.7 from the module instead of 2.32.3 built from source; the NCCL checkout in `build/nccl` (same version)
+  only provides the profiler headers for CoMMA. The module only ships `nccl.h` (NCCL installs no profiler
+  headers), so the checkout is needed. No Inspector (see above); `NCCL_ALLGATHERV_ENABLE=0` (broadcast bug
+  workaround) is still set, but NCCL 2.27 does not have this bug or variable
+- 4 ranks per node instead of 1; both benchmarks pick their GPU by the local rank, so every rank has to see all
+  GPUs of its node (no per-task GPU binding)
 - launched with `srun` (`LAUNCHER` in `config.sh`) instead of `mpirun`, with `--cpus-per-task=8`: when bound to
   one core, CoMMA's polling thread competes with NCCL's proxy thread (suspected cause of the slow CoMMA runs on
   Chameleon with 2 nodes); `--cpu-bind=verbose` logs the binding in the job output
@@ -70,8 +87,9 @@ Differences to Chameleon:
 ### Results of an iteration
 
 ```
-results/<array job id>/<task id>/
-  job-info.txt                   job, nodes, GPUs, NCCL version, commits of the builds, loaded modules
+results/<experiment>/<array job id>/<task id>/
+  job-info.txt                   experiment and its parameters, job, nodes, GPUs, NCCL version, commits of the
+                                 builds, loaded modules
   <test>_<profiler>.out          benchmark output (nccl-tests table / ncclbench csv)
   profiler-out.tar.gz            profiler outputs of all nodes (extracted by profiler_results.load_run)
 ```

@@ -1,9 +1,9 @@
-"""Aggregate benchmark and profiler timings of run.sbatch runs into pandas DataFrames.
+"""Aggregate benchmark and profiler timings of the experiments (experiments/*.sbatch) into pandas DataFrames.
 
 Copy of profiler_results.py from the Chameleon project; only the layout of the profiler outputs differs
 (one directory per node instead of master + clush-copied worker directories, see _profiler_dirs).
 
-Layout of a run folder (one iteration), as written by run.sbatch:
+Layout of a run folder (one iteration), as written by experiment.sh:
     <run>/<test>_<profiler>.out     benchmark stdout (nccl-tests table or ncclbench csv)
     <run>/profiler-out.tar.gz       profiler outputs of all nodes:
         profiler-out/<profiler>/<test>/<host>/...

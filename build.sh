@@ -49,6 +49,7 @@ compile() {
     [ -n "$CUDA_ARCH" ] || { echo "CUDA_ARCH is not set (config.sh)" >&2; exit 1; }
     [ -f "$NCCL_HOME/include/nccl.h" ] || { echo "no nccl.h in NCCL_HOME=$NCCL_HOME" >&2; exit 1; }
     echo "NCCL $(nccl_version) from $NCCL_HOME, sources for the plugins: $NCCL_TAG"
+    check_nccl_version
     echo "CUDA from $CUDA_HOME, MPI from $MPI_HOME"
     local jobs=${SLURM_CPUS_PER_TASK:-8}
     cd "$BUILD_DIR"
@@ -60,8 +61,12 @@ compile() {
         -DNCCL_LIBRARIES="$NCCL_HOME/lib/libnccl.so" -DNCCL_INCLUDE_DIRS="$NCCL_HOME/include"
     cmake --build lib-ncclbench/build --parallel "$jobs"
 
-    # the Inspector is part of the NCCL repo and has a standalone makefile
-    make -C nccl/plugins/profiler/inspector -j "$jobs" CUDA_HOME="$CUDA_HOME"
+    # the Inspector is part of the NCCL repo (since v2.29.7) and has a standalone makefile
+    if [ -d nccl/plugins/profiler/inspector ]; then
+        make -C nccl/plugins/profiler/inspector -j "$jobs" CUDA_HOME="$CUDA_HOME"
+    else
+        echo "Skipping the Inspector: not in NCCL $NCCL_TAG"
+    fi
 
     cmake -S ncclsee-cpp -B ncclsee-cpp/build -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CUDA_COMPILER="$CUDA_HOME/bin/nvcc" -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH"
@@ -70,8 +75,7 @@ compile() {
     # --locked: fail instead of resolving other crate versions than in Cargo.lock
     (cd CoMMA && "$CARGO_HOME/bin/cargo" build --release --locked --jobs "$jobs")
 
-    ls -l "$NCCL_TESTS_BIN"/{all_reduce,broadcast}_perf "$NCCLBENCH_BIN" \
-        "$COMMA_PLUGIN" "$INSPECTOR_PLUGIN" "$NCCLSEE_PLUGIN"
+    ls -l "$NCCL_TESTS_BIN"/{all_reduce,broadcast}_perf "$NCCLBENCH_BIN" "$COMMA_PLUGIN" "$NCCLSEE_PLUGIN"
 }
 
 case "${1:-all}" in

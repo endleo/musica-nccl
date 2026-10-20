@@ -1,4 +1,5 @@
-# Shared settings for build.sh and run.sbatch (sourced, not executed).
+# Shared settings for build.sh and the experiments (sourced, not executed): environment, versions, paths,
+# profiler configuration. The experiment parameters (sizes, profilers, ...) are in experiments/*.sbatch.
 
 # ---------------------------------------------------------------------------------------------
 # environment (TODO: fill in)
@@ -16,9 +17,20 @@ load_modules() {
     export LD_LIBRARY_PATH="$NCCL_HOME/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 }
 
-# version of the NCCL in NCCL_HOME, e.g. 2.32.3
+# version of the NCCL in NCCL_HOME, e.g. 2.27.7
 nccl_version() {
     grep -E '^#define NCCL_(MAJOR|MINOR|PATCH) ' "$NCCL_HOME/include/nccl.h" | awk '{print $3}' | paste -sd.
+}
+
+# warns if the loaded NCCL is not the version of NCCL_TAG (whose headers the profilers are built against)
+check_nccl_version() {
+    local loaded tag
+    loaded=$(nccl_version)
+    tag=${NCCL_TAG#v}
+    tag=${tag%-*}
+    if [ "$loaded" != "$tag" ]; then
+        echo "WARNING: loaded NCCL is ${loaded:-unknown} ($NCCL_HOME), but NCCL_TAG is $NCCL_TAG" >&2
+    fi
 }
 
 # GPU architecture to compile for, e.g. 90 for H100 (TODO: fill in)
@@ -33,9 +45,11 @@ LAUNCHER="srun --cpu-bind=verbose"
 # versions (same as the Chameleon experiment)
 # ---------------------------------------------------------------------------------------------
 
-# NCCL itself comes from the module; this checkout is only used for the sources of the Inspector
-# plugin and the profiler headers CoMMA builds against -> should match the module's version
-NCCL_TAG="v2.32.3-1"
+# NCCL itself comes from the module; this checkout is only used for the profiler headers CoMMA builds
+# against (and the sources of the Inspector, which only exists since v2.29.7) -> has to match the module's version.
+# NCCL 2.27 loads profiler plugins up to API v4: fine for CoMMA and ncclsee (v4), but the Inspector (v5 only)
+# cannot be used with it, so build.sh skips it.
+NCCL_TAG="v2.27.7-1"
 NCCL_TESTS_TAG="v2.19.6"
 NCCLBENCH_COMMIT="3b9d2c4ffb73a486fcae4eb3f881ad6efe93f3fc"
 COMMA_COMMIT="1d5b9676f66c1ab560bccd69f13745c11f0437a5"
@@ -62,18 +76,12 @@ INSPECTOR_PLUGIN="$BUILD_DIR/nccl/plugins/profiler/inspector/libnccl-profiler-in
 NCCLSEE_PLUGIN="$BUILD_DIR/ncclsee-cpp/build/libncclsee.so"
 
 # ---------------------------------------------------------------------------------------------
-# experiment
+# profilers
 # ---------------------------------------------------------------------------------------------
 
-PROFILERS=(comma inspector ncclsee)
-NCCL_TESTS=(all_reduce broadcast)                                             # nccl-tests binaries <test>_perf
-declare -A NCCLBENCH_TESTS=([all_reduce_bench]=ncclAllReduce [broadcast_bench]=ncclBroadcast)
-
-NCCL_TESTS_ARGS="-b 8 -e 1G -f 2 -g 1"
-NCCLBENCH_ARGS="--sizes $(for i in $(seq 3 30); do printf '%s ' $((2**i)); done)--data-type float --blocking --csv --warmups 5 --iterations 50"
-
 # environment of every run. Workaround for an NCCL bug (since v2.29.2) that hides plain broadcasts from
-# profiler plugins (see notes/nccl-broadcast-profiler-events.md in the Chameleon project)
+# profiler plugins (see notes/nccl-broadcast-profiler-events.md in the Chameleon project); NCCL 2.27 does not
+# have this variable and ignores it
 export NCCL_ALLGATHERV_ENABLE=0
 
 # environment per profiler: profiler_env <profiler> <output directory of this process (per node)>
