@@ -12,9 +12,9 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --time=01:00:00
 #SBATCH --output=logs/build-%j.out
-#SBATCH --partition=zen4_0768_h100x4
+#SBATCH --partition=zen4_0768
 #SBATCH --account=p201270
-#SBATCH --qos=zen4_0768_h100x4
+#SBATCH --qos=zen4_0768
 
 set -eo pipefail
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")}"

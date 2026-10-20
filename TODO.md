@@ -6,8 +6,6 @@ Open items first, roughly by priority; done items at the bottom with the date.
 
 ### Before the first run
 - [ ] Fill in the module loads and `CUDA_ARCH` in `config.sh`
-- [ ] `build.sh` as a job: does vanilla mode on the GPU partition accept a request without GPUs (otherwise add
-      `--gres=gpu:1`)?
 - [ ] Check that the module sets `NCCL_HOME` (or `NCCL_ROOT`) and whether its include directory has profiler
       headers (`module show <nccl>`, then `ls <prefix>/include`; NCCL's own install only ships `nccl.h`)
 - [ ] First build: does `build.sh fetch` work on the login node, does CoMMA build against the NCCL source checkout
@@ -47,7 +45,8 @@ Open items first, roughly by priority; done items at the bottom with the date.
 ## Done
 
 ### 2026-10-21
-- [x] Slurm partition (`zen4_0768_h100x4`), account and QoS (dev QoS for the quick experiment) filled in
+- [x] Slurm partition, account and QoS filled in: GPU nodes `zen4_0768_h100x4` for the experiments (dev QoS for
+      the quick experiment), CPU nodes `zen4_0768` for the build job
 - [x] `experiments/quick.sbatch` in MUSICA's comfort mode (`-N 2 --gres=gpu:4`) for the first test run;
       `full.sbatch` and `build.sh` explicit with `#ASC --vanilla`; `job-info.txt` records `scontrol show job` and
       `CUDA_VISIBLE_DEVICES` per rank
