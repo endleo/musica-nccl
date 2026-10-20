@@ -39,8 +39,8 @@ Fill in the TODOs:
 - `config.sh`: `module load` lines in `load_modules` (CUDA, NCCL, MPI, cmake; clang/libclang and protobuf for
   CoMMA), `CUDA_ARCH`; check that `NCCL_HOME`/`CUDA_HOME`/`MPI_HOME` are found (`build.sh compile` prints them)
   and that `NCCL_TAG` matches the module's NCCL version (`build.sh` and the experiments warn if not)
-- `experiments/*.sbatch` and `build.sh`: `#SBATCH` partition, account, QoS, GPU request (all 4 GPUs per node in
-  `full.sbatch`); maybe `--time`
+- `experiments/*.sbatch` and `build.sh`: maybe `--time` (partition, account and QoS are set: partition
+  `zen4_0768_h100x4`, QoS `dev_zen4_0768_h100x4` for `quick.sbatch`, `zen4_0768_h100x4` otherwise)
 
 ## Usage
 

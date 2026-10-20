@@ -15,12 +15,12 @@
 # More than one core per rank: bound to a single core, CoMMA's polling thread competes with NCCL's proxy thread
 # (suspected cause of the slow CoMMA runs on Chameleon)
 #SBATCH --cpus-per-task=8
-# TODO: fill in. GPU request: all 4 GPUs per node (e.g. --gres=gpu:4), visible to every rank; do not bind one GPU
+# all 4 GPUs per node, visible to every rank; do not bind one GPU
 # per task (--gpus-per-task), both benchmarks pick their GPU by the local rank among all GPUs of the node
-#SBATCH --partition=
-#SBATCH --account=
-#SBATCH --qos=
-#SBATCH --gres=
+#SBATCH --partition=zen4_0768_h100x4
+#SBATCH --account=p201270
+#SBATCH --qos=zen4_0768_h100x4
+#SBATCH --gres=gpu:4
 
 cd "$SLURM_SUBMIT_DIR"
 source ./experiment.sh
