@@ -15,7 +15,7 @@ exists since NCCL 2.29.7). CoMMA and ncclsee use v4 and work.
 ## Layout
 
 ```
-config.sh             shared settings: modules (TODO), GPU arch (TODO), versions, paths, profiler environment
+config.sh             shared settings: modules, GPU arch, versions, paths, profiler environment
 build.sh              clones and builds everything into build/
 experiments/          one Slurm batch file per experiment, with its parameters (profilers, tests, sizes, ...)
   full.sbatch         the Chameleon experiment: CoMMA + ncclsee, 8 B - 1 GiB, 3 iterations
@@ -34,7 +34,7 @@ logs/                 Slurm job output (not in git)
 
 ## Before the first run
 
-Fill in the TODOs:
+Check the settings (filled in for MUSICA):
 
 - `config.sh`: `module load` lines in `load_modules` (CUDA, NCCL, MPI, cmake; clang/libclang and protobuf for
   CoMMA), `CUDA_ARCH`; check that `NCCL_HOME`/`CUDA_HOME`/`MPI_HOME` are found (`build.sh compile` prints them)

@@ -30,6 +30,9 @@ fetch() {
     clone https://github.com/NVIDIA/nccl.git nccl "$NCCL_TAG"
     clone https://github.com/NVIDIA/nccl-tests.git nccl-tests "$NCCL_TESTS_TAG"
     clone https://github.com/parlab-tuwien/lib-ncclbench lib-ncclbench "$NCCLBENCH_COMMIT"
+    # its example (the ncclbench binary) would download yaml-cpp while configuring; cloned here instead, so that
+    # compile needs no internet (same tag as in lib-ncclbench/example/CMakeLists.txt)
+    clone https://github.com/jbeder/yaml-cpp.git yaml-cpp 0.8.0
 
     # ncclsee-cpp bundles its own profiler headers; submodules: spdlog, nlohmann/json, range-v3
     clone https://github.com/ruben-laso/ncclsee-cpp.git ncclsee-cpp "$NCCLSEE_COMMIT"
@@ -59,8 +62,10 @@ compile() {
     make -C nccl-tests -j "$jobs" MPI=1 MPI_HOME="$MPI_HOME" NCCL_HOME="$NCCL_HOME" CUDA_HOME="$CUDA_HOME" \
         NVCC_GENCODE="-gencode=arch=compute_$CUDA_ARCH,code=sm_$CUDA_ARCH"
 
+    # CMAKE_POLICY_VERSION_MINIMUM: yaml-cpp 0.8.0 requires CMake < 3.5, which CMake 4 no longer accepts
     cmake -S lib-ncclbench -B lib-ncclbench/build -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLES=ON \
-        -DNCCL_LIBRARIES="$NCCL_HOME/lib/libnccl.so" -DNCCL_INCLUDE_DIRS="$NCCL_HOME/include"
+        -DNCCL_LIBRARIES="$NCCL_HOME/lib/libnccl.so" -DNCCL_INCLUDE_DIRS="$NCCL_HOME/include" \
+        -DFETCHCONTENT_SOURCE_DIR_YAML-CPP="$BUILD_DIR/yaml-cpp" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
     cmake --build lib-ncclbench/build --parallel "$jobs"
 
     # the Inspector is part of the NCCL repo (since v2.29.7) and has a standalone makefile

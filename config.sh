@@ -12,7 +12,7 @@ load_modules() {
     module load protobuf/31.1-GCCcore-14.3.0
 
     # taken from the modules if they set them, otherwise derived from nvcc/mpicc; set them here if that fails
-    NCCL_HOME="${NCCL_HOME:-${NCCL_ROOT:-}}"
+    NCCL_HOME="${NCCL_HOME:-${NCCL_ROOT:-${EBROOTNCCL:-}}}"  # EBROOTNCCL: set by EasyBuild modules
     CUDA_HOME="${CUDA_HOME:-$(dirname "$(dirname "$(command -v nvcc)")")}"
     MPI_HOME="${MPI_HOME:-$(dirname "$(dirname "$(command -v mpicc)")")}"
     export LD_LIBRARY_PATH="$NCCL_HOME/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
