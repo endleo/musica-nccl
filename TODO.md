@@ -5,15 +5,10 @@ Open items first, roughly by priority; done items at the bottom with the date.
 ## Open
 
 ### Before the first run
-- [ ] CoMMA build: bindgen loads `libclang.so` (looks in `LIBCLANG_PATH`, `llvm-config --libdir`, `LD_LIBRARY_PATH`,
-      system paths); MUSICA has no Clang module -> find an LLVM module that includes clang (EasyBuild: not the
-      `-minimal` variant; check `ls $EBROOTLLVM/lib/libclang.so*` after loading, ideally GCCcore-14.3.0) and add it to
-      `load_modules`. Fallbacks: system libclang (`ldconfig -p | grep libclang`), the `libclang` pip wheel with
-      `LIBCLANG_PATH` (may need `BINDGEN_EXTRA_CLANG_ARGS` for the GCC include dirs), or ask the admins
 - [ ] Check that the module sets `NCCL_HOME` (or `NCCL_ROOT`) and whether its include directory has profiler
       headers (`module show <nccl>`, then `ls <prefix>/include`; NCCL's own install only ships `nccl.h`)
 - [ ] First build: does `build.sh fetch` work on the login node, does CoMMA build against the NCCL source checkout
-      (on Chameleon it was a built NCCL tree), are clang/libclang and protoc available as modules?
+      (on Chameleon it was a built NCCL tree), does it build with the modules in `config.sh`?
 - [ ] After the first quick run: switch `experiments/quick.sbatch` from MUSICA's comfort mode to explicit options
       with `#ASC --vanilla` (as `full.sbatch`), so the batch files state their options without MUSICA-specific
       defaults; take the values from what comfort mode applied (`scontrol show job` in `job-info.txt`: tasks per
@@ -49,6 +44,8 @@ Open items first, roughly by priority; done items at the bottom with the date.
 ## Done
 
 ### 2026-10-21
+- [x] libclang for the CoMMA build: `LLVM/20.1.8-GCCcore-14.3.0` module, `LIBCLANG_PATH` set in `build.sh` (otherwise
+      bindgen picks the incomplete system LLVM 21 in `/usr/lib64/llvm21`, whose libLLVM is missing)
 - [x] Module loads (NCCL 2.27.7 / CUDA 12.9.1, gompi 2025b, protobuf) and `CUDA_ARCH=90` in `config.sh`
 - [x] lib-ncclbench build with CMake 4: `CMAKE_POLICY_VERSION_MINIMUM=3.5` for yaml-cpp 0.8.0, which `build.sh fetch`
       now clones (no download while configuring)
