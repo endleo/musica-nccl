@@ -1,18 +1,21 @@
 #!/bin/bash -l
 # Quick check of the setup (< 10 min): ncclsee only, 8 B - 1 MiB, one iteration.
 # Submit from the repository root: sbatch experiments/quick.sbatch
+#
+# Uses MUSICA's comfort mode (the default without `#ASC --vanilla`, see README): only nodes and GPUs are requested,
+# MUSICA sets the rest. For full GPU nodes (-N X --gres=gpu:4) that is 4 tasks per node, 22 CPUs per task,
+# exclusive nodes, all memory. The applied settings are in the job output and in job-info.txt.
+# TODO (TODO.md): switch to the explicit options and `#ASC --vanilla`, as in full.sbatch
 #SBATCH --job-name=quick
 #SBATCH --array=1
 #SBATCH --nodes=2
-#SBATCH --ntasks-per-node=4
-#SBATCH --exclusive
+#SBATCH --gres=gpu:4
 #SBATCH --time=00:10:00
 #SBATCH --output=logs/%x_%A_%a.out
-#SBATCH --cpus-per-task=8
-# TODO: fill in (as in full.sbatch)
+# TODO: fill in
 #SBATCH --partition=
 #SBATCH --account=
-#SBATCH --gres=
+#SBATCH --qos=
 
 cd "$SLURM_SUBMIT_DIR"
 source ./experiment.sh

@@ -1,8 +1,10 @@
 #!/bin/bash -l
+#ASC --vanilla
 # The full experiment (as on Chameleon): every benchmark once per profiler, 8 B - 1 GiB.
 # Submit from the repository root: sbatch experiments/full.sbatch
 # Each array task is one iteration of the whole experiment (on whatever nodes the task gets);
 # --array=1-3%1: 3 iterations, at most 1 running at a time. Other count: sbatch --array=1-5%1 experiments/full.sbatch
+# `#ASC --vanilla`: plain Slurm on MUSICA, i.e. the options below apply as written (see README)
 #SBATCH --job-name=full
 #SBATCH --array=1-3%1
 #SBATCH --nodes=2
@@ -17,6 +19,7 @@
 # per task (--gpus-per-task), both benchmarks pick their GPU by the local rank among all GPUs of the node
 #SBATCH --partition=
 #SBATCH --account=
+#SBATCH --qos=
 #SBATCH --gres=
 
 cd "$SLURM_SUBMIT_DIR"

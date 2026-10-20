@@ -39,7 +39,8 @@ Fill in the TODOs:
 - `config.sh`: `module load` lines in `load_modules` (CUDA, NCCL, MPI, cmake; clang/libclang and protobuf for
   CoMMA), `CUDA_ARCH`; check that `NCCL_HOME`/`CUDA_HOME`/`MPI_HOME` are found (`build.sh compile` prints them)
   and that `NCCL_TAG` matches the module's NCCL version (`build.sh` and the experiments warn if not)
-- `experiments/*.sbatch` and `build.sh`: `#SBATCH` partition, account, GPU request (all 4 GPUs per node); maybe `--time`
+- `experiments/*.sbatch` and `build.sh`: `#SBATCH` partition, account, QoS, GPU request (all 4 GPUs per node in
+  `full.sbatch`); maybe `--time`
 
 ## Usage
 
@@ -87,12 +88,28 @@ Differences to Chameleon:
 - profiler outputs per node in `profiler-out/<profiler>/<test>/<host>/` (shared filesystem; CoMMA's file names
   are only unique per node), so `profiler_results._profiler_dirs` differs from the Chameleon version
 
+### MUSICA Slurm modes
+
+MUSICA has two [Slurm modes](https://docs.asc.ac.at/musica/slurm_modes.html); partition, account, QoS and time
+limit have to be set in both:
+
+- comfort mode (default): for some request shapes MUSICA sets the other options itself. Full GPU nodes: only
+  `-N X --gres=gpu:4`, which gets 4 tasks per node, 22 CPUs per task, exclusive nodes, all memory. Slurm prints the
+  applied settings in the job output.
+- vanilla mode (`#ASC --vanilla` in the batch file): plain Slurm, the options apply as written (MUSICA only checks
+  that the required ones are set).
+
+`experiments/quick.sbatch` uses comfort mode for now (first test run); `full.sbatch` and `build.sh` use vanilla
+mode with explicit options, so that the batch files state what they use without knowledge of MUSICA's defaults.
+Either way, `job-info.txt` records what Slurm actually applied (`scontrol show job`, `CUDA_VISIBLE_DEVICES` per
+rank).
+
 ### Results of an iteration
 
 ```
 results/<experiment>/<array job id>/<task id>/
-  job-info.txt                   experiment and its parameters, job, nodes, GPUs, NCCL version, commits of the
-                                 builds, loaded modules
+  job-info.txt                   experiment and its parameters, job, nodes, GPUs (visible per rank), NCCL version,
+                                 commits of the builds, loaded modules, `scontrol show job`
   <test>_<profiler>.out          benchmark output (nccl-tests table / ncclbench csv)
   profiler-out.tar.gz            profiler outputs of all nodes (extracted by profiler_results.load_run)
 ```

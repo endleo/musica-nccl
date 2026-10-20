@@ -1,9 +1,11 @@
 #!/bin/bash -l
+#ASC --vanilla
 # Fetches and builds nccl-tests, lib-ncclbench and the profiler plugins into build/ (versions in config.sh),
 # against the NCCL, CUDA and MPI of the modules. Run from the repository root:
 #   ./build.sh                  fetch + compile (on a login node)
 #   ./build.sh fetch            only download sources, rust and crates (needs internet)
 #   sbatch build.sh compile     compile on a compute node (after fetch, e.g. if the login node has no nvcc)
+# `#ASC --vanilla`: plain Slurm on MUSICA, i.e. the options below apply as written (see README)
 #SBATCH --job-name=musica-nccl-build
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -13,6 +15,7 @@
 # TODO: fill in
 #SBATCH --partition=
 #SBATCH --account=
+#SBATCH --qos=
 
 set -eo pipefail
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")}"

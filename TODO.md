@@ -11,6 +11,12 @@ Open items first, roughly by priority; done items at the bottom with the date.
       headers (`module show <nccl>`, then `ls <prefix>/include`; NCCL's own install only ships `nccl.h`)
 - [ ] First build: does `build.sh fetch` work on the login node, does CoMMA build against the NCCL source checkout
       (on Chameleon it was a built NCCL tree), are clang/libclang and protoc available as modules?
+- [ ] After the first quick run: switch `experiments/quick.sbatch` from MUSICA's comfort mode to explicit options
+      with `#ASC --vanilla` (as `full.sbatch`), so the batch files state their options without MUSICA-specific
+      defaults; take the values from what comfort mode applied (`scontrol show job` in `job-info.txt`: tasks per
+      node, CPUs per task, exclusive, memory, GPU binding)
+- [ ] Check that `#ASC --vanilla` with the explicit options of `full.sbatch` and `build.sh` is accepted (MUSICA
+      checks for required flags)
 - [ ] First `experiments/quick.sbatch` run: does `srun` launch the MPI ranks (PMI support of the MPI module;
       otherwise `LAUNCHER="mpirun"` in `config.sh`, which needs `-x` for the environment), do the 4 ranks per
       node get different GPUs (nccl-tests prints the device per rank), does it finish in < 10 min?
@@ -40,6 +46,9 @@ Open items first, roughly by priority; done items at the bottom with the date.
 ## Done
 
 ### 2026-10-21
+- [x] `experiments/quick.sbatch` in MUSICA's comfort mode (`-N 2 --gres=gpu:4`) for the first test run;
+      `full.sbatch` and `build.sh` explicit with `#ASC --vanilla`; `job-info.txt` records `scontrol show job` and
+      `CUDA_VISIBLE_DEVICES` per rank
 - [x] NCCL_TAG v2.27.7-1 (version of the module); `build.sh` and the experiments warn if the loaded NCCL differs
 - [x] Inspector skipped (not loadable with NCCL 2.27, see above)
 - [x] 4 ranks per node (one per GPU), every rank sees all GPUs of its node (both benchmarks pick by local rank)

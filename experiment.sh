@@ -29,7 +29,7 @@ write_job_info() {
     echo "job: $SLURM_JOB_ID (array job ${SLURM_ARRAY_JOB_ID:--}, task ${SLURM_ARRAY_TASK_ID:--})"
     echo "date: $(date -Is)"
     echo "nodes: $(scontrol show hostnames "$SLURM_JOB_NODELIST" | paste -sd' ')"
-    echo "tasks: $SLURM_NTASKS ($SLURM_NTASKS_PER_NODE per node)"
+    echo "tasks: $SLURM_NTASKS (per node: $SLURM_TASKS_PER_NODE), CPUs per task: ${SLURM_CPUS_PER_TASK:--}"
     echo "profilers: ${PROFILERS[*]}"
     echo "nccl-tests: ${NCCL_TESTS[*]}, args: $NCCL_TESTS_ARGS"
     echo "ncclbench: ${!NCCLBENCH_TESTS[*]}, args: $NCCLBENCH_ARGS"
@@ -39,8 +39,13 @@ write_job_info() {
     done
     echo; echo "GPUs:"
     srun --ntasks-per-node=1 bash -c 'echo "$(hostname -s): $(nvidia-smi -L | paste -sd" ")"'
+    echo; echo "GPUs visible per rank (CUDA_VISIBLE_DEVICES):"
+    srun bash -c 'echo "$(hostname -s) local rank $SLURM_LOCALID: ${CUDA_VISIBLE_DEVICES:-unset}"' | sort
     echo; echo "modules:"
     module list 2>&1
+    # everything Slurm applied (incl. what MUSICA's comfort mode set)
+    echo; echo "slurm job:"
+    scontrol show job "$SLURM_JOB_ID"
 }
 
 run_experiment() {
