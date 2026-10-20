@@ -4,6 +4,8 @@ The NCCL benchmark vs. profiler experiment of the Chameleon project (`chameleon-
 cluster: run nccl-tests and lib-ncclbench once per NCCL profiler plugin (CoMMA, ncclsee; no Inspector, see below) and
 compare the latencies the profilers report with the times the benchmarks measure.
 
+Open tasks and progress: [TODO.md](TODO.md).
+
 CUDA, NCCL (2.27.7) and MPI come from the cluster's modules; the benchmarks and profiler plugins are built from
 source (same versions as on Chameleon). The experiments are Slurm array jobs; the analysis runs locally.
 
@@ -21,6 +23,7 @@ experiments/          one Slurm batch file per experiment, with its parameters (
 experiment.sh         shared part of the experiments (run every test once per profiler, job info, packing)
 profiled.sh           wrapper started per rank: sets the profiler environment, then runs the benchmark
 fetch.sh              copies results/ and logs/ from the cluster into a local clone (rsync over ssh)
+TODO.md               open tasks and progress
 analysis/
   analyze.py          plots and tables of a run (the evaluation cells of the Chameleon notebook)
   profiler_results.py parsing of benchmark and profiler outputs (copied from the Chameleon project)
