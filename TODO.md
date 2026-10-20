@@ -5,7 +5,7 @@ Open items first, roughly by priority; done items at the bottom with the date.
 ## Open
 
 ### Before the first run
-- [ ] Fill in the module loads and `CUDA_ARCH` in `config.sh`, the `#SBATCH` partition/account/GPU request in
+- [ ] Fill in the module loads and `CUDA_ARCH` in `config.sh`, the `#SBATCH` partition/account/QoS/GPU request in
       `build.sh` and `experiments/*.sbatch`
 - [ ] Check that the module sets `NCCL_HOME` (or `NCCL_ROOT`) and whether its include directory has profiler
       headers (`module show <nccl>`, then `ls <prefix>/include`; NCCL's own install only ships `nccl.h`)
