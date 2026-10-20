@@ -1,0 +1,14 @@
+# sources and builds (build.sh)
+build/
+
+# job output (fetch.sh copies it, but it is not part of the results)
+logs/*
+!logs/.gitkeep
+
+# created by the analysis
+profiler-out-extracted/
+*.pdf
+
+# python
+__pycache__/
+.venv
