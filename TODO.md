@@ -5,8 +5,11 @@ Open items first, roughly by priority; done items at the bottom with the date.
 ## Open
 
 ### Before the first run
-- [ ] CoMMA build: bindgen needs libclang; no Clang/LLVM module is loaded in `config.sh` yet (system libclang or
-      e.g. a `Clang/...-GCCcore-14.3.0` module); check where the CMake 4 comes from (system or a module)
+- [ ] CoMMA build: bindgen loads `libclang.so` (looks in `LIBCLANG_PATH`, `llvm-config --libdir`, `LD_LIBRARY_PATH`,
+      system paths); MUSICA has no Clang module -> find an LLVM module that includes clang (EasyBuild: not the
+      `-minimal` variant; check `ls $EBROOTLLVM/lib/libclang.so*` after loading, ideally GCCcore-14.3.0) and add it to
+      `load_modules`. Fallbacks: system libclang (`ldconfig -p | grep libclang`), the `libclang` pip wheel with
+      `LIBCLANG_PATH` (may need `BINDGEN_EXTRA_CLANG_ARGS` for the GCC include dirs), or ask the admins
 - [ ] Check that the module sets `NCCL_HOME` (or `NCCL_ROOT`) and whether its include directory has profiler
       headers (`module show <nccl>`, then `ls <prefix>/include`; NCCL's own install only ships `nccl.h`)
 - [ ] First build: does `build.sh fetch` work on the login node, does CoMMA build against the NCCL source checkout

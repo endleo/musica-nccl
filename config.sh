@@ -10,6 +10,7 @@ load_modules() {
     module load NCCL/2.27.7-GCCcore-14.3.0-CUDA-12.9.1
     module load gompi/2025b
     module load protobuf/31.1-GCCcore-14.3.0
+    # TODO: libclang for CoMMA (bindgen), e.g. an LLVM module with clang (not "-minimal"); see TODO.md
     module load CUDA/12.9.1
 
     # taken from the modules if they set them, otherwise derived from nvcc/mpicc; set them here if that fails
