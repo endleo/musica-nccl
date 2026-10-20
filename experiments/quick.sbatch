@@ -13,7 +13,6 @@
 #SBATCH --time=00:10:00
 #SBATCH --output=logs/%x_%A_%a.out
 #SBATCH --partition=zen4_0768_h100x4
-#SBATCH --account=p201270
 #SBATCH --qos=dev_zen4_0768_h100x4
 
 cd "$SLURM_SUBMIT_DIR"

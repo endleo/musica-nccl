@@ -2,13 +2,14 @@
 # profiler configuration. The experiment parameters (sizes, profilers, ...) are in experiments/*.sbatch.
 
 # ---------------------------------------------------------------------------------------------
-# environment (TODO: fill in)
+# environment
 # ---------------------------------------------------------------------------------------------
 
 load_modules() {
     module purge
-    # TODO: CUDA, NCCL, MPI, cmake; for CoMMA also clang/libclang (bindgen) and protobuf (protoc)
-    # module load ...
+    module load NCCL/2.27.7-GCCcore-14.3.0-CUDA-12.9.1
+    module load gompi/2025b
+    module load protobuf/31.1-GCCcore-14.3.0
 
     # taken from the modules if they set them, otherwise derived from nvcc/mpicc; set them here if that fails
     NCCL_HOME="${NCCL_HOME:-${NCCL_ROOT:-}}"
@@ -33,8 +34,8 @@ check_nccl_version() {
     fi
 }
 
-# GPU architecture to compile for, e.g. 90 for H100 (TODO: fill in)
-CUDA_ARCH=""
+# GPU architecture to compile for, e.g. 90 for H100
+CUDA_ARCH="90"
 
 # launcher for the benchmarks inside the job, one process per task
 LAUNCHER="srun --cpu-bind=verbose"

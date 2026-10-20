@@ -18,7 +18,6 @@
 # all 4 GPUs per node, visible to every rank; do not bind one GPU
 # per task (--gpus-per-task), both benchmarks pick their GPU by the local rank among all GPUs of the node
 #SBATCH --partition=zen4_0768_h100x4
-#SBATCH --account=p201270
 #SBATCH --qos=zen4_0768_h100x4
 #SBATCH --gres=gpu:4
 
