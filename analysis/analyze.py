@@ -4,7 +4,7 @@
 
 A run is one array job of an experiment; its iteration folders (01, 02, ...) are the array tasks. The profilers,
 tests and ncclbench settings are taken from the run itself (output file names, job-info.txt). Writes into the run
-folder: violins.pdf per iteration, recorded_operations.pdf and reported_times.txt.
+folder: violins.pdf per iteration, recorded_operations.pdf, recorded_by_size.pdf and reported_times.txt.
 """
 
 import argparse
@@ -76,6 +76,19 @@ def plot_recorded_operations(run, iteration_dirs, settings):
     plt.close(ax.figure)
 
 
+def plot_recorded_by_size(run, iteration_dirs, settings):
+    # the same share per message size, one panel per operation, summed over all iterations
+    counts = pd.concat([pr.record_counts(d, profilers=settings["profilers"], nccl_tests=settings["nccl_tests"],
+                                         nccl_bench_tests=settings["nccl_bench_tests"], warmups=settings["warmups"],
+                                         by_size=True)
+                        for d in iteration_dirs])
+    axs = pr.plot_recorded_by_size(counts, profilers=settings["profilers"])
+    fig = axs[0].figure
+    fig.suptitle(f"{run} ({counts['run'].nunique()} iterations)")
+    fig.savefig(run / "recorded_by_size.pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
 def reported_time_tables(run, iteration_dirs, settings):
     # mean times per message size [us], per benchmark and operation, over all iterations: per profiler the time it
     # reported and the time the benchmark itself reported in the same run (each profiler has its own run).
@@ -112,6 +125,7 @@ def main():
         print(f"{d}: violins.pdf")
         plot_iteration(d, settings)
     plot_recorded_operations(run, iteration_dirs, settings)
+    plot_recorded_by_size(run, iteration_dirs, settings)
     reported_time_tables(run, iteration_dirs, settings)
 
 

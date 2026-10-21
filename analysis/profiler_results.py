@@ -34,6 +34,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 PROFILERS = ["comma", "inspector", "ncclsee"]
@@ -321,10 +322,12 @@ def _nccl_tests_calls_per_size_and_rank(path):
     return warmup + 2 * (1 + iters * agg + validation), n_ranks
 
 
-def record_counts(run_dir, profilers=PROFILERS, nccl_tests=NCCL_TESTS, nccl_bench_tests=NCCL_BENCH_TESTS, warmups=5):
+def record_counts(run_dir, profilers=PROFILERS, nccl_tests=NCCL_TESTS, nccl_bench_tests=NCCL_BENCH_TESTS, warmups=5,
+                  by_size=False):
     """
     number of NCCL calls each benchmark issued (all ranks, incl. warm-ups) vs. the number of records each profiler
-    has for them, per (test, profiler); one row each with columns expected, recorded, recorded_pct
+    has for them, per (test, profiler); one row each with columns expected, recorded, recorded_pct.
+    by_size: one row per (test, profiler, size_bytes) instead
 
     recorded = profiler records with a usable time for the benchmarked operation and sizes (e.g. CoMMA ops that were
     reclaimed after its op timeout have no time and count as missed)
@@ -349,28 +352,35 @@ def record_counts(run_dir, profilers=PROFILERS, nccl_tests=NCCL_TESTS, nccl_benc
             if not out_file.exists():
                 warnings.warn(f"missing benchmark output {out_file}")
                 continue
+            # expected calls per size and rank
             if is_bench:
-                bench = load_ncclbench(out_file)
-                sizes = set(bench["size_bytes"])
-                expected_per_rank = warmups * len(sizes) + len(bench)
+                expected_per_rank = load_ncclbench(out_file)["size_bytes"].value_counts() + warmups
                 ranks = n_ranks
             else:
-                sizes = set(load_nccl_tests(out_file)["size_bytes"])
                 calls, ranks = _nccl_tests_calls_per_size_and_rank(out_file)
-                expected_per_rank = calls * len(sizes)
+                sizes = load_nccl_tests(out_file)["size_bytes"].unique()
+                expected_per_rank = pd.Series(calls, index=sizes)
             if ranks is None:
                 warnings.warn(f"{run_dir}/{profiler}: unknown number of ranks (no nccl-tests output), skipping {test}")
                 continue
 
-            recorded = 0
+            recorded = pd.Series(0, index=expected_per_rank.index)
             for _, directory in _profiler_dirs(root, profiler, test):
                 p, _ = PROFILER_LOADERS[profiler](directory)
                 if not p.empty:
-                    recorded += int(((p["operation"] == operation) & p["size_bytes"].isin(sizes)).sum())
+                    sizes = p.loc[p["operation"] == operation, "size_bytes"]
+                    recorded = recorded.add(sizes.value_counts(), fill_value=0).reindex(recorded.index)
             expected = expected_per_rank * ranks
-            rows.append({"run": run_dir.name, "test": test, "benchmark": "ncclbench" if is_bench else "nccl-tests",
-                         "profiler": profiler, "operation": operation, "ranks": ranks,
-                         "expected": expected, "recorded": recorded, "recorded_pct": 100 * recorded / expected})
+
+            meta = {"run": run_dir.name, "test": test, "benchmark": "ncclbench" if is_bench else "nccl-tests",
+                    "profiler": profiler, "operation": operation, "ranks": ranks}
+            if by_size:
+                for size in sorted(expected.index):
+                    rows.append({**meta, "size_bytes": int(size), "expected": int(expected[size]),
+                                 "recorded": int(recorded[size]), "recorded_pct": 100 * recorded[size] / expected[size]})
+            else:
+                rows.append({**meta, "expected": int(expected.sum()), "recorded": int(recorded.sum()),
+                             "recorded_pct": 100 * recorded.sum() / expected.sum()})
     return pd.DataFrame(rows)
 
 
@@ -431,6 +441,11 @@ PLOT_STYLE = {
 }
 COLORS = {"benchmark": "#6baed6", "profiler": "#fdae6b"}
 PROFILER_COLORS = {"comma": "#fdae6b", "inspector": "#a1d99b", "ncclsee": "#9ecae1"}
+# darker steps of the same hues for lines (the fill colors above are too light for thin lines on white); comma vs.
+# inspector are close for red-green color blindness, so line plots also mark the profiler by marker shape
+PROFILER_LINE_COLORS = {"comma": "#e6550d", "inspector": "#31a354", "ncclsee": "#3182bd"}
+PROFILER_MARKERS = {"comma": "o", "inspector": "^", "ncclsee": "s"}
+BENCHMARK_LINESTYLES = {"nccl-tests": "-", "ncclbench": "--"}
 OPERATION_LABELS = {"all_reduce": "AllReduce", "broadcast": "Broadcast", "all_gather": "AllGather",
                     "reduce_scatter": "ReduceScatter", "reduce": "Reduce"}
 EDGE_COLOR = "#606060"
@@ -538,3 +553,55 @@ def plot_recorded_operations(counts, profilers=PROFILERS, ax=None, width=0.25, l
                 if text.get_text() == "ncclsee":
                     text.set_fontfamily("monospace")
     return ax
+
+
+def plot_recorded_by_size(counts, profilers=PROFILERS, axs=None):
+    """
+    share of the NCCL calls each profiler recorded with a usable time, per message size: one panel per operation,
+    color and marker per profiler, line style per benchmark. `counts` from record_counts(..., by_size=True), rows of
+    several runs/iterations are summed
+    """
+    agg = (counts.groupby(["operation", "benchmark", "profiler", "size_bytes"])[["expected", "recorded"]].sum()
+                 .reset_index())
+    agg["recorded_pct"] = 100 * agg["recorded"] / agg["expected"]
+    operations = sorted(agg["operation"].unique(), key=lambda o: list(OPERATION_LABELS).index(o)
+                        if o in OPERATION_LABELS else 99)
+    benchmarks = [b for b in BENCHMARK_LINESTYLES if b in set(agg["benchmark"])]
+    profilers = [p for p in profilers if p in set(agg["profiler"])]
+
+    with plt.rc_context(PLOT_STYLE):
+        if axs is None:
+            _, axs = plt.subplots(1, len(operations), figsize=(4.5 * len(operations), 3.4), sharey=True,
+                                  layout="constrained", squeeze=False)
+            axs = axs[0]
+        for ax, operation in zip(axs, operations):
+            for profiler in profilers:
+                for benchmark in benchmarks:
+                    sel = agg[(agg["operation"] == operation) & (agg["profiler"] == profiler)
+                              & (agg["benchmark"] == benchmark)].sort_values("size_bytes")
+                    ax.plot(sel["size_bytes"], sel["recorded_pct"], color=PROFILER_LINE_COLORS.get(profiler),
+                            linestyle=BENCHMARK_LINESTYLES[benchmark], linewidth=1.5,
+                            marker=PROFILER_MARKERS.get(profiler, "o"), markersize=5,
+                            markeredgecolor="white", markeredgewidth=0.6, zorder=3)
+            ax.axhline(100, color="gray", linestyle="-.", linewidth=1, zorder=1)
+            ax.yaxis.grid(True, linestyle=":", color="lightgray", zorder=0)
+            ax.set_xscale("log", base=2)
+            sizes = sorted(agg.loc[agg["operation"] == operation, "size_bytes"].unique())
+            ticks = sizes[::3]
+            ax.set_xticks(ticks, [size_label(int(t)) for t in ticks], rotation=45, ha="right")
+            ax.minorticks_off()
+            ax.set_ylim(0, 105)
+            ax.set_yticks([0, 25, 50, 75, 100])
+            ax.set_xlabel("Message size")
+            ax.set_title(OPERATION_LABELS.get(operation, operation))
+        axs[0].set_ylabel("Recorded operations [%]")
+
+        handles = [Line2D([], [], color=PROFILER_LINE_COLORS.get(p), marker=PROFILER_MARKERS.get(p, "o"),
+                          markeredgecolor="white", linewidth=1.5, label=PROFILER_LABELS.get(p, p)) for p in profilers]
+        handles += [Line2D([], [], color="gray", linestyle=BENCHMARK_LINESTYLES[b], linewidth=1.5, label=b)
+                    for b in benchmarks]
+        leg = axs[0].figure.legend(handles=handles, loc="outside lower center", ncol=len(handles))
+        for text in leg.get_texts():
+            if text.get_text() == "ncclsee":
+                text.set_fontfamily("monospace")
+    return axs

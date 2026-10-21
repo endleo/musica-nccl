@@ -118,4 +118,5 @@ results/<experiment>/<array job id>/<task id>/
   profiler-out.tar.gz            profiler outputs of all nodes (extracted by profiler_results.load_run)
 ```
 
-`analyze.py` writes `violins.pdf` per iteration and `recorded_operations.pdf` and `reported_times.txt` per run.
+`analyze.py` writes `violins.pdf` per iteration and `recorded_operations.pdf`, `recorded_by_size.pdf` (share of
+recorded calls per message size) and `reported_times.txt` per run.
