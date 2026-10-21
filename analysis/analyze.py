@@ -21,6 +21,12 @@ import profiler_results as pr
 
 RESULTS = Path(__file__).resolve().parent.parent / "results"
 
+def label(path):
+    """short name of a run or iteration folder for figure titles: results/full/1863257/01 -> full/1863257/01"""
+    path = Path(path).resolve()
+    return str(path.relative_to(RESULTS)) if path.is_relative_to(RESULTS) else str(path)
+
+
 # message sizes of the violin plots (those the run has; the smallest and largest size if it has none of them)
 VIOLIN_SIZES = [8, 2**10, 2**25, 2**30]
 
@@ -47,7 +53,7 @@ def plot_iteration(iteration_dir, settings):
     run_sizes = sorted(df.loc[df["source"] == "benchmark", "size_bytes"].unique())
     sizes = [s for s in VIOLIN_SIZES if s in run_sizes] or [run_sizes[0], run_sizes[-1]]
     with plt.rc_context(pr.PLOT_STYLE):
-        fig, axs = plt.subplots(len(tests), len(sizes), figsize=(4*len(sizes), 3*len(tests)), layout="constrained",
+        fig, axs = plt.subplots(len(tests), len(sizes), figsize=(3*len(sizes), 2.5*len(tests)), layout="constrained",
                                 squeeze=False)
         for row, test in zip(axs, tests):
             operation = pr.OPERATION_LABELS.get(test.removesuffix("_bench"), test)
@@ -56,7 +62,7 @@ def plot_iteration(iteration_dir, settings):
                 ax.set_title(f"{operation}, {pr.size_label(int(size))}")
                 if ax is not axs[0][0]:
                     ax.get_legend().remove()
-        fig.suptitle(f"Benchmark vs. profiler latency ({iteration_dir})")
+        fig.suptitle(f"Benchmark vs. profiler latency ({label(iteration_dir)})")
         fig.savefig(iteration_dir / "violins.pdf")
     plt.close(fig)
 
@@ -71,7 +77,8 @@ def plot_recorded_operations(run, iteration_dirs, settings):
                 .round(1).to_string())
 
     ax = pr.plot_recorded_operations(counts, profilers=settings["profilers"])
-    ax.set_title(f"{run} ({counts['run'].nunique()} iterations)", pad=30)
+    with plt.rc_context(pr.PLOT_STYLE):
+        ax.set_title(f"{label(run)} ({counts['run'].nunique()} iterations)", pad=30)
     ax.figure.savefig(run / "recorded_operations.pdf", bbox_inches="tight")
     plt.close(ax.figure)
 
@@ -84,7 +91,8 @@ def plot_recorded_by_size(run, iteration_dirs, settings):
                         for d in iteration_dirs])
     axs = pr.plot_recorded_by_size(counts, profilers=settings["profilers"])
     fig = axs[0].figure
-    fig.suptitle(f"{run} ({counts['run'].nunique()} iterations)")
+    with plt.rc_context(pr.PLOT_STYLE):
+        fig.suptitle(f"{label(run)} ({counts['run'].nunique()} iterations)")
     fig.savefig(run / "recorded_by_size.pdf", bbox_inches="tight")
     plt.close(fig)
 

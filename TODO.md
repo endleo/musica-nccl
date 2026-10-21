@@ -36,7 +36,7 @@ Open items first, roughly by priority; done items at the bottom with the date.
 - [ ] With NCCL >= 2.29.2: check that the broadcast workaround (`NCCL_ALLGATHERV_ENABLE=0`) is still needed
 
 ### Experiment
-- [ ] **CoMMA has no times for ranks that only communicate within their node** (full run 1863257: only 61-69 % of
+- [ ] **CoMMA has no times for ranks that only communicate within their node** (full run 1863257: only 60-69 % of
       the calls have a time, ncclsee ~100 %). CoMMA records every call, but its time (`child_dur`) comes from child
       events, by default only proxy ops (network transfers). Ranks without a network transfer in an op never get a
       child and the op is reclaimed after the timeout. Small sizes: AllReduce only ranks 0/4 (tree), Broadcast only
@@ -61,6 +61,7 @@ Open items first, roughly by priority; done items at the bottom with the date.
 ## Done
 
 ### 2026-10-21
+- [x] `report/summary.typ`: two-page summary of run 1863257 (Typst); figure titles name runs relative to `results/`
 - [x] Plot of the recorded calls per message size (`recorded_by_size.pdf`, `profiler_results.plot_recorded_by_size`):
       one panel per operation, color + marker per profiler, line style per benchmark
 - [x] Full experiment 1863257 (3 iterations, CoMMA + ncclsee, 8 B - 1 GiB): all steps succeeded, nccl-tests validation
