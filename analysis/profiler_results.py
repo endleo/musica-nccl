@@ -305,6 +305,38 @@ def max_over_ranks(df):
     return pd.concat([df[df["source"] == "benchmark"], reduced], ignore_index=True)[COLUMNS]
 
 
+def paired_iterations(df):
+    """
+    ncclbench iterations with the benchmark time and the profiler time of the same call side by side: one row per
+    (run, test, operation, profiler, size_bytes, iteration) with t_benchmark, t_profiler [s] (profiler: max over
+    ranks, the same reduction as ncclbench), ratio (profiler / benchmark) and difference_us (benchmark - profiler)
+    """
+    reduced = max_over_ranks(df[df["benchmark"] == "ncclbench"])
+    keys = ["run", "test", "operation", "profiler", "size_bytes", "iteration"]
+    paired = reduced.pivot_table(index=keys, columns="source", values="time_s").dropna()
+    paired = paired.rename(columns={"benchmark": "t_benchmark", "profiler": "t_profiler"}).reset_index()
+    paired.columns.name = None
+    paired["ratio"] = paired["t_profiler"] / paired["t_benchmark"]
+    paired["difference_us"] = (paired["t_benchmark"] - paired["t_profiler"]) * 1e6
+    return paired
+
+
+def iteration_deviation(df):
+    """
+    run-to-run consistency of the ncclbench times: per (test, operation, profiler run, source, size) and run, the
+    median time of the run as deviation from the median over all runs [%] (deviation_pct), and the spread within the
+    run: interquartile range in % of the run's median (iqr_pct)
+    """
+    reduced = max_over_ranks(df[df["benchmark"] == "ncclbench"])
+    keys = ["test", "operation", "profiler", "source", "size_bytes"]
+    g = reduced.groupby(keys + ["run"])["time_s"]
+    stats = pd.DataFrame({"median": g.median(), "iqr": g.quantile(0.75) - g.quantile(0.25)}).reset_index()
+    center = stats.groupby(keys)["median"].transform("median")
+    stats["deviation_pct"] = 100 * (stats["median"] - center) / center
+    stats["iqr_pct"] = 100 * stats["iqr"] / stats["median"]
+    return stats
+
+
 def _nccl_tests_calls_per_size_and_rank(path):
     """
     (NCCL calls per size and rank, number of ranks) of an nccl-tests run, from its output header
@@ -446,6 +478,10 @@ PROFILER_COLORS = {"comma": "#fdae6b", "inspector": "#a1d99b", "ncclsee": "#9eca
 PROFILER_LINE_COLORS = {"comma": "#e6550d", "inspector": "#31a354", "ncclsee": "#3182bd"}
 PROFILER_MARKERS = {"comma": "o", "inspector": "^", "ncclsee": "s"}
 BENCHMARK_LINESTYLES = {"nccl-tests": "-", "ncclbench": "--"}
+# iterations (runs) of an experiment, in order; checked for color blindness (all pairs). Iterations beyond these are
+# gray and only told apart by their marker
+ITERATION_COLORS = ["#7570b3", "#1b9e77", "#a6761d"]
+ITERATION_MARKERS = ["o", "s", "^", "D", "v", "P"]
 OPERATION_LABELS = {"all_reduce": "AllReduce", "broadcast": "Broadcast", "all_gather": "AllGather",
                     "reduce_scatter": "ReduceScatter", "reduce": "Reduce"}
 EDGE_COLOR = "#606060"
@@ -605,3 +641,143 @@ def plot_recorded_by_size(counts, profilers=PROFILERS, axs=None):
             if text.get_text() == "ncclsee":
                 text.set_fontfamily("monospace")
     return axs
+
+
+def _size_axis(ax, sizes, label=True):
+    ax.set_xscale("log", base=2)
+    ticks = sorted(sizes)[::3]
+    ax.set_xticks(ticks, [size_label(int(t)) for t in ticks] if label else [], rotation=45, ha="right")
+    ax.minorticks_off()
+    if label:
+        ax.set_xlabel("Message size")
+
+
+def _monospace_ncclsee(texts):
+    for text in texts:
+        if text.get_text() == "ncclsee":
+            text.set_fontfamily("monospace")
+
+
+def plot_latency_by_size(df, profilers=PROFILERS, compare="ratio", partial=None):
+    """
+    ncclbench latencies over all message sizes, one column per operation: top median latency of the profiler (solid)
+    and of the benchmark (dashed) per profiler run; bottom the profiler vs. the benchmark time of the same call,
+    median with the interquartile range as band. Uses all iterations of all runs in `df` (from load_run(s)).
+
+    compare: "ratio" (profiler / benchmark) or "difference" (benchmark - profiler, in us)
+    partial: optional {profiler: {operation: sizes}} where the profiler has times for only some ranks (shaded, since
+             its max over ranks then only covers those ranks), e.g. from record_counts(..., by_size=True)
+    """
+    paired = paired_iterations(df)
+    profilers = [p for p in profilers if p in set(paired["profiler"])]
+    operations = sorted(paired["operation"].unique(), key=lambda o: list(OPERATION_LABELS).index(o)
+                        if o in OPERATION_LABELS else 99)
+    column = {"ratio": "ratio", "difference": "difference_us"}[compare]
+    g = paired.groupby(["operation", "profiler", "size_bytes"])
+    stats = pd.DataFrame({
+        "t_benchmark": g["t_benchmark"].median(), "t_profiler": g["t_profiler"].median(),
+        "median": g[column].median(), "q25": g[column].quantile(0.25), "q75": g[column].quantile(0.75),
+    }).reset_index()
+
+    with plt.rc_context(PLOT_STYLE):
+        fig, axs = plt.subplots(2, len(operations), figsize=(4.5 * len(operations), 5.6), sharex="col",
+                                sharey="row", layout="constrained", squeeze=False, height_ratios=[1, 1])
+        for col, operation in enumerate(operations):
+            top, bottom = axs[0][col], axs[1][col]
+            for profiler in profilers:
+                sel = stats[(stats["operation"] == operation) & (stats["profiler"] == profiler)].sort_values("size_bytes")
+                color, marker = PROFILER_LINE_COLORS.get(profiler), PROFILER_MARKERS.get(profiler, "o")
+                style = {"color": color, "linewidth": 1.5, "zorder": 3}
+                top.plot(sel["size_bytes"], sel["t_profiler"] * 1e6, marker=marker, markersize=4,
+                         markeredgecolor="white", markeredgewidth=0.6, **style)
+                top.plot(sel["size_bytes"], sel["t_benchmark"] * 1e6, linestyle="--", **style)
+                bottom.fill_between(sel["size_bytes"], sel["q25"], sel["q75"], color=color, alpha=0.18, linewidth=0,
+                                    zorder=2)
+                bottom.plot(sel["size_bytes"], sel["median"], marker=marker, markersize=4, markeredgecolor="white",
+                            markeredgewidth=0.6, **style)
+                for size in (partial or {}).get(profiler, {}).get(operation, []):
+                    for ax in (top, bottom):
+                        ax.axvspan(size / 2**0.5, size * 2**0.5, color="#ececec", linewidth=0, zorder=0)
+
+            sizes = stats.loc[stats["operation"] == operation, "size_bytes"].unique()
+            top.set_yscale("log")
+            top.set_title(OPERATION_LABELS.get(operation, operation))
+            _size_axis(top, sizes, label=False)
+            _size_axis(bottom, sizes)
+            if compare == "ratio":
+                bottom.axhline(1, color="gray", linestyle="-.", linewidth=1, zorder=1)
+                bottom.set_ylim(0, max(1.1, stats["q75"].max() * 1.05))
+            else:
+                bottom.axhline(0, color="gray", linestyle="-.", linewidth=1, zorder=1)
+                bottom.set_yscale("symlog", linthresh=10)
+            for ax in (top, bottom):
+                ax.yaxis.grid(True, linestyle=":", color="lightgray", zorder=0)
+        axs[0][0].set_ylabel("Median latency [µs]")
+        axs[1][0].set_ylabel("Profiler / benchmark" if compare == "ratio" else "Benchmark − profiler [µs]")
+
+        handles = [Line2D([], [], color=PROFILER_LINE_COLORS.get(p), marker=PROFILER_MARKERS.get(p, "o"),
+                          markeredgecolor="white", linewidth=1.5, label=PROFILER_LABELS.get(p, p)) for p in profilers]
+        handles += [Line2D([], [], color="gray", linewidth=1.5, label="profiler"),
+                    Line2D([], [], color="gray", linestyle="--", linewidth=1.5, label="benchmark (top)"),
+                    Patch(facecolor="gray", alpha=0.3, label="interquartile range (bottom)")]
+        if partial and any(any(v.values()) for v in partial.values()):
+            names = ", ".join(PROFILER_LABELS.get(p, p) for p, ops in partial.items() if any(ops.values()))
+            handles.append(Patch(facecolor="#ececec", label=f"{names}: times from some ranks only"))
+        leg = fig.legend(handles=handles, loc="outside lower center", ncol=4)
+        _monospace_ncclsee(leg.get_texts())
+    return fig
+
+
+def plot_iteration_consistency(df, profilers=PROFILERS):
+    """
+    run-to-run consistency of the ncclbench latencies: per message size, the median time of each run (iteration) as
+    deviation from the median over all runs [%] (lines), against the spread within a run (band: interquartile range
+    in % of the median, mean over the runs, centered on 0). One row per profiler run and source (benchmark time /
+    profiler time), one column per operation; all panels share the y axis. Runs whose lines stay within the band
+    differ less from each other than the calls within one run.
+    """
+    dev = iteration_deviation(df)
+    profilers = [p for p in profilers if p in set(dev["profiler"])]
+    operations = sorted(dev["operation"].unique(), key=lambda o: list(OPERATION_LABELS).index(o)
+                        if o in OPERATION_LABELS else 99)
+    runs = sorted(dev["run"].unique())
+    rows = [(p, src) for p in profilers for src in ("benchmark", "profiler")]
+    band = dev.groupby(["operation", "profiler", "source", "size_bytes"])["iqr_pct"].mean().reset_index()
+    limit = max(dev["deviation_pct"].abs().max(), (band["iqr_pct"] / 2).max()) * 1.1
+
+    with plt.rc_context(PLOT_STYLE):
+        fig, axs = plt.subplots(len(rows), len(operations), figsize=(4.5 * len(operations), 1.9 * len(rows) + 0.8),
+                                sharex="col", sharey=True, layout="constrained", squeeze=False)
+        for r, (profiler, source) in enumerate(rows):
+            for c, operation in enumerate(operations):
+                ax = axs[r][c]
+                b = band[(band["operation"] == operation) & (band["profiler"] == profiler)
+                         & (band["source"] == source)].sort_values("size_bytes")
+                ax.fill_between(b["size_bytes"], -b["iqr_pct"] / 2, b["iqr_pct"] / 2, color="#d9d9d9", linewidth=0,
+                                zorder=1)
+                ax.axhline(0, color="gray", linewidth=0.8, zorder=2)
+                for i, run in enumerate(runs):
+                    sel = dev[(dev["operation"] == operation) & (dev["profiler"] == profiler)
+                              & (dev["source"] == source) & (dev["run"] == run)].sort_values("size_bytes")
+                    ax.plot(sel["size_bytes"], sel["deviation_pct"],
+                            color=ITERATION_COLORS[i] if i < len(ITERATION_COLORS) else "#969696",
+                            marker=ITERATION_MARKERS[i % len(ITERATION_MARKERS)], markersize=3.5,
+                            markeredgecolor="white", markeredgewidth=0.5, linewidth=1.2, zorder=3)
+                ax.set_ylim(-limit, limit)
+                ax.yaxis.grid(True, linestyle=":", color="lightgray", zorder=0)
+                _size_axis(ax, b["size_bytes"], label=(r == len(rows) - 1))
+                if r == 0:
+                    ax.set_title(OPERATION_LABELS.get(operation, operation))
+                if c == 0:
+                    name = PROFILER_LABELS.get(profiler, profiler)
+                    ax.set_ylabel(f"{name} run:\n{'benchmark' if source == 'benchmark' else name} [%]")
+                    if profiler == "ncclsee":
+                        ax.yaxis.label.set_fontfamily("monospace")
+
+        handles = [Line2D([], [], color=ITERATION_COLORS[i] if i < len(ITERATION_COLORS) else "#969696",
+                          marker=ITERATION_MARKERS[i % len(ITERATION_MARKERS)], markeredgecolor="white",
+                          linewidth=1.2, label=f"iteration {run}") for i, run in enumerate(runs)]
+        handles.append(Patch(facecolor="#d9d9d9", label="spread within an iteration (IQR)"))
+        fig.legend(handles=handles, loc="outside lower center", ncol=len(handles))
+        fig.supylabel("Deviation of the iteration median from the median over iterations", fontsize=10)
+    return fig

@@ -55,12 +55,21 @@ Open items first, roughly by priority; done items at the bottom with the date.
 - [ ] nccl-tests: more warmups/iterations (`-w 5 -n 50`) for comparability with ncclbench
 
 ### Analysis
+- [ ] Decide between `latency_ratio.pdf` and `latency_difference.pdf` (same figure, profiler vs. benchmark as ratio or
+      as difference in µs)
+- [ ] Run 1863257, ncclsee run: iteration 02 has 20-35 % lower Broadcast medians at sizes up to 32 KiB (alternating
+      sizes), iteration 03 5-25 % higher AllReduce medians up to 16 MiB (`iteration_consistency.pdf`); the CoMMA run
+      is within a few %. Same nodes in all iterations -> look at the per-iteration distributions
+- [ ] ncclsee, AllReduce 2 MiB: profiler and benchmark time about equal (ratio ~1, elsewhere ~0.8); NCCL uses ring
+      instead of tree at that size (CoMMA records)
 - [ ] Tests for the analysis (the Chameleon project has a pytest suite for `profiler_results.py`; this copy
       only differs in `_profiler_dirs`)
 
 ## Done
 
 ### 2026-10-21
+- [x] Latency over all sizes (`latency_ratio.pdf` / `latency_difference.pdf`) and consistency of the iterations
+      (`iteration_consistency.pdf`)
 - [x] `report/summary.typ`: two-page summary of run 1863257 (Typst); figure titles name runs relative to `results/`
 - [x] Plot of the recorded calls per message size (`recorded_by_size.pdf`, `profiler_results.plot_recorded_by_size`):
       one panel per operation, color + marker per profiler, line style per benchmark

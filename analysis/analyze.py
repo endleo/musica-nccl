@@ -4,7 +4,9 @@
 
 A run is one array job of an experiment; its iteration folders (01, 02, ...) are the array tasks. The profilers,
 tests and ncclbench settings are taken from the run itself (output file names, job-info.txt). Writes into the run
-folder: violins.pdf per iteration, recorded_operations.pdf, recorded_by_size.pdf and reported_times.txt.
+folder: violins.pdf per iteration; recorded_operations.pdf, recorded_by_size.pdf, latency_ratio.pdf and
+latency_difference.pdf (the same figure, two ways of comparing profiler and benchmark), iteration_consistency.pdf
+and reported_times.txt per run.
 """
 
 import argparse
@@ -95,14 +97,40 @@ def plot_recorded_by_size(run, iteration_dirs, settings):
         fig.suptitle(f"{label(run)} ({counts['run'].nunique()} iterations)")
     fig.savefig(run / "recorded_by_size.pdf", bbox_inches="tight")
     plt.close(fig)
+    return counts
 
 
-def reported_time_tables(run, iteration_dirs, settings):
+def plot_latencies(run, df_all, counts):
+    # ncclbench latencies over all sizes: profiler vs. benchmark time of the same call, as ratio and as difference
+    # (two versions of the same figure); sizes where a profiler has times for only some ranks are shaded
+    bench = counts[counts["benchmark"] == "ncclbench"]
+    partial = {profiler: {op: list(g.loc[g["recorded_pct"] < 100, "size_bytes"]) for op, g in by_op.groupby("operation")}
+               for profiler, by_op in bench.groupby("profiler")}
+    for compare, name in [("ratio", "latency_ratio.pdf"), ("difference", "latency_difference.pdf")]:
+        fig = pr.plot_latency_by_size(df_all, profilers=list(partial), compare=compare, partial=partial)
+        with plt.rc_context(pr.PLOT_STYLE):
+            fig.suptitle(f"{label(run)} ({df_all['run'].nunique()} iterations, ncclbench)")
+        fig.savefig(run / name, bbox_inches="tight")
+        plt.close(fig)
+
+
+def plot_iteration_consistency(run, df_all):
+    # how much the iterations differ from each other, compared to the spread within an iteration (ncclbench)
+    if df_all["run"].nunique() < 2:
+        print(f"{run}: only one iteration, no iteration_consistency.pdf")
+        return
+    fig = pr.plot_iteration_consistency(df_all)
+    with plt.rc_context(pr.PLOT_STYLE):
+        fig.suptitle(f"{label(run)}: consistency of the iterations (ncclbench)")
+    fig.savefig(run / "iteration_consistency.pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
+def reported_time_tables(run, iteration_dirs, settings, df_all):
     # mean times per message size [us], per benchmark and operation, over all iterations: per profiler the time it
     # reported and the time the benchmark itself reported in the same run (each profiler has its own run).
     # nccl-tests reports the mean as well (per rank: elapsed time / iterations, then averaged over ranks), so all
     # profiler records of a size are averaged over all ranks; for nccl-tests they include its warm-up/sync/validation calls
-    df_all = pr.load_runs(iteration_dirs, **settings)
     text = []
     for (benchmark, operation), table in pr.reported_time_tables(df_all, profilers=settings["profilers"]).items():
         caption = f"{pr.OPERATION_LABELS.get(operation, operation)} ({benchmark}), {run.name}, {len(iteration_dirs)} iteration(s)"
@@ -133,8 +161,11 @@ def main():
         print(f"{d}: violins.pdf")
         plot_iteration(d, settings)
     plot_recorded_operations(run, iteration_dirs, settings)
-    plot_recorded_by_size(run, iteration_dirs, settings)
-    reported_time_tables(run, iteration_dirs, settings)
+    counts = plot_recorded_by_size(run, iteration_dirs, settings)
+    df_all = pr.load_runs(iteration_dirs, **settings)
+    plot_latencies(run, df_all, counts)
+    plot_iteration_consistency(run, df_all)
+    reported_time_tables(run, iteration_dirs, settings, df_all)
 
 
 if __name__ == "__main__":
