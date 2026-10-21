@@ -4,7 +4,7 @@
 # Submit from the repository root: sbatch experiments/full.sbatch
 # Each array task is one iteration of the whole experiment (on whatever nodes the task gets);
 # --array=1-3%1: 3 iterations, at most 1 running at a time. Other count: sbatch --array=1-5%1 experiments/full.sbatch
-# `#ASC --vanilla`: plain Slurm on MUSICA, i.e. the options below apply as written (see README)
+# the ASC directive above: vanilla mode, i.e. plain Slurm on MUSICA, the options below apply as written (see README)
 #SBATCH --job-name=full
 #SBATCH --array=1-3%1
 #SBATCH --nodes=2

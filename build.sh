@@ -7,7 +7,7 @@
 #   sbatch build.sh compile     compile on a compute node (after fetch, e.g. if the login node has no nvcc)
 #   ./build.sh clean            remove the build outputs (keeps sources, rust and crates), e.g. after changing modules:
 #                               make and cmake do not notice that, and cmake keeps the CUDA it found in its cache
-# `#ASC --vanilla`: plain Slurm on MUSICA, i.e. the options below apply as written (see README)
+# the ASC directive above: vanilla mode, i.e. plain Slurm on MUSICA, the options below apply as written (see README)
 #SBATCH --job-name=musica-nccl-build
 #SBATCH --nodes=1
 #SBATCH --ntasks=1

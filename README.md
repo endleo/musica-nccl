@@ -99,7 +99,8 @@ limit have to be set in both:
   `-N X --gres=gpu:4`, which gets 4 tasks per node, 22 CPUs per task, exclusive nodes, all memory. Slurm prints the
   applied settings in the job output.
 - vanilla mode (`#ASC --vanilla` in the batch file): plain Slurm, the options apply as written (MUSICA only checks
-  that the required ones are set).
+  that the required ones are set). MUSICA finds the directive anywhere in the file, even inside a comment, so
+  batch files in comfort mode must not mention it literally.
 
 `experiments/quick.sbatch` uses comfort mode for now (first test run); `full.sbatch` and `build.sh` use vanilla
 mode with explicit options, so that the batch files state what they use without knowledge of MUSICA's defaults.
