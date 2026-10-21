@@ -1,25 +1,23 @@
 #!/bin/bash -l
-#ASC --vanilla
 # The full experiment (as on Chameleon): every benchmark once per profiler, 8 B - 1 GiB.
 # Submit from the repository root: sbatch experiments/full.sbatch
 # Each array task is one iteration of the whole experiment (on whatever nodes the task gets);
 # --array=1-3%1: 3 iterations, at most 1 running at a time. Other count: sbatch --array=1-5%1 experiments/full.sbatch
-# the ASC directive above: vanilla mode, i.e. plain Slurm on MUSICA, the options below apply as written (see README)
+#
+# Same Slurm options as the working quick run (job 1863239): MUSICA's comfort mode (the default without the ASC
+# vanilla directive, see README), only nodes and GPUs are requested, MUSICA sets the rest. For full GPU nodes
+# (-N X --gres=gpu:4) that is 4 tasks per node, 22 CPUs per task (more than one core per rank matters: bound to a
+# single core, CoMMA's polling thread competes with NCCL's proxy thread), exclusive nodes, all memory. Every rank sees all GPUs of its node via --gpu-bind=none in LAUNCHER.
+# TODO (TODO.md): switch to the explicit options and vanilla mode
+# Do not write the vanilla directive in comments here: MUSICA finds it anywhere in the file and enables vanilla mode
 #SBATCH --job-name=full
 #SBATCH --array=1-3%1
 #SBATCH --nodes=2
-#SBATCH --ntasks-per-node=4
-#SBATCH --exclusive
+#SBATCH --gres=gpu:4
 #SBATCH --time=01:00:00
 #SBATCH --output=logs/%x_%A_%a.out
-# More than one core per rank: bound to a single core, CoMMA's polling thread competes with NCCL's proxy thread
-# (suspected cause of the slow CoMMA runs on Chameleon)
-#SBATCH --cpus-per-task=8
-# all 4 GPUs per node, visible to every rank; do not bind one GPU
-# per task (--gpus-per-task), both benchmarks pick their GPU by the local rank among all GPUs of the node
 #SBATCH --partition=zen4_0768_h100x4
 #SBATCH --qos=zen4_0768_h100x4
-#SBATCH --gres=gpu:4
 
 cd "$SLURM_SUBMIT_DIR"
 source ./experiment.sh

@@ -12,13 +12,14 @@ Open items first, roughly by priority; done items at the bottom with the date.
       headers (`module show <nccl>`, then `ls <prefix>/include`; NCCL's own install only ships `nccl.h`)
 - [ ] First build: does `build.sh fetch` work on the login node, does CoMMA build against the NCCL source checkout
       (on Chameleon it was a built NCCL tree), does it build with the modules in `config.sh`?
-- [ ] After the first quick run: switch `experiments/quick.sbatch` from MUSICA's comfort mode to explicit options
-      with `#ASC --vanilla` (as `full.sbatch`), so the batch files state their options without MUSICA-specific
-      defaults; take the values from what comfort mode applied (`scontrol show job` in `job-info.txt`: tasks per
-      node, CPUs per task, exclusive, memory, GPU binding). Known from job 1863221: 4 tasks per node, 22 CPUs
-      per task, one GPU per task (-> `--gpu-bind=none` in `LAUNCHER`)
-- [ ] Check that `#ASC --vanilla` with the explicit options of `full.sbatch` and `build.sh` is accepted (MUSICA
-      checks for required flags)
+- [ ] Switch `experiments/quick.sbatch` and `experiments/full.sbatch` from MUSICA's comfort mode to explicit
+      options with `#ASC --vanilla`, so the batch files state their options without MUSICA-specific defaults;
+      take the values from what comfort mode applied (`scontrol show job` in `job-info.txt`). Known from jobs
+      1863221/1863239: 4 tasks per node, 22 CPUs per task, exclusive, one GPU per task (-> `--gpu-bind=none` in
+      `LAUNCHER`). The explicit options full.sbatch had before (untested): `--ntasks-per-node=4 --exclusive
+      --cpus-per-task=8 --gres=gpu:4`, no per-task GPU binding
+- [ ] Check that `#ASC --vanilla` with the explicit options of `build.sh` is accepted (MUSICA checks for required
+      flags)
 - [ ] First `experiments/quick.sbatch` run: does `srun` launch the MPI ranks (PMI support of the MPI module;
       otherwise `LAUNCHER="mpirun"` in `config.sh`, which needs `-x` for the environment), do the 4 ranks per
       node get different GPUs (nccl-tests prints the device per rank), does it finish in < 10 min?
@@ -39,7 +40,6 @@ Open items first, roughly by priority; done items at the bottom with the date.
       ops that were reclaimed without `child_dur` (see Chameleon TODO)
 - [ ] Optional: baseline run without any profiler, to quantify profiler overhead
 - [ ] nccl-tests: more warmups/iterations (`-w 5 -n 50`) for comparability with ncclbench
-- [ ] Check the CPU binding in the job output (`--cpu-bind=verbose`) and whether `--cpus-per-task=8` fits the nodes
 
 ### Analysis
 - [ ] Tests for the analysis (the Chameleon project has a pytest suite for `profiler_results.py`; this copy
@@ -48,6 +48,9 @@ Open items first, roughly by priority; done items at the bottom with the date.
 ## Done
 
 ### 2026-10-21
+- [x] CPU binding (`--cpu-bind=verbose` in the job output): 22 cores per rank in comfort mode (job 1863239)
+- [x] `experiments/full.sbatch` uses the same Slurm options as the successful quick run (comfort mode,
+      `-N 2 --gres=gpu:4`), regular QoS, so it can be queued as is
 - [x] Quick run 1863221 failed: comfort mode binds one GPU per task, but both benchmarks pick their GPU by local rank
       among all visible GPUs ("invalid device ordinal"); `--gpu-bind=none` in `LAUNCHER`. If MUSICA restricts the
       GPUs per task via cgroups, that is not enough -> switch quick to the explicit options of full.sbatch

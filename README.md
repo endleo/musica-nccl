@@ -84,7 +84,7 @@ Differences to Chameleon:
   workaround) is still set, but NCCL 2.27 does not have this bug or variable
 - 4 ranks per node instead of 1; both benchmarks pick their GPU by the local rank, so every rank has to see all
   GPUs of its node (no per-task GPU binding)
-- launched with `srun` (`LAUNCHER` in `config.sh`) instead of `mpirun`, with `--cpus-per-task=8`: when bound to
+- launched with `srun` (`LAUNCHER` in `config.sh`) instead of `mpirun`, with several cores per rank (22 in comfort mode): when bound to
   one core, CoMMA's polling thread competes with NCCL's proxy thread (suspected cause of the slow CoMMA runs on
   Chameleon with 2 nodes); `--cpu-bind=verbose` logs the binding in the job output
 - profiler outputs per node in `profiler-out/<profiler>/<test>/<host>/` (shared filesystem; CoMMA's file names
@@ -102,8 +102,9 @@ limit have to be set in both:
   that the required ones are set). MUSICA finds the directive anywhere in the file, even inside a comment, so
   batch files in comfort mode must not mention it literally.
 
-`experiments/quick.sbatch` uses comfort mode for now (first test run); `full.sbatch` and `build.sh` use vanilla
-mode with explicit options, so that the batch files state what they use without knowledge of MUSICA's defaults.
+The experiments (`quick.sbatch`, `full.sbatch`) use comfort mode for now, since that is what worked in the first
+runs; they should switch to vanilla mode with explicit options (TODO.md), so that the batch files state what they
+use without knowledge of MUSICA's defaults. `build.sh` uses vanilla mode with explicit options.
 Either way, `job-info.txt` records what Slurm actually applied (`scontrol show job`, `CUDA_VISIBLE_DEVICES` per
 rank).
 

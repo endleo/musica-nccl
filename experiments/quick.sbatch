@@ -5,7 +5,7 @@
 # Uses MUSICA's comfort mode (the default without the ASC vanilla directive, see README): only nodes and GPUs are
 # requested, MUSICA sets the rest. For full GPU nodes (-N X --gres=gpu:4) that is 4 tasks per node, 22 CPUs per
 # task, exclusive nodes, all memory. The applied settings are in the job output and in job-info.txt.
-# TODO (TODO.md): switch to the explicit options and vanilla mode, as in full.sbatch
+# TODO (TODO.md): switch to the explicit options and vanilla mode
 # Do not write the vanilla directive in comments here: MUSICA finds it anywhere in the file and enables vanilla mode
 #SBATCH --job-name=quick
 #SBATCH --array=1
