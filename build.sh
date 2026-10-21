@@ -5,6 +5,8 @@
 #   ./build.sh                  fetch + compile (on a login node)
 #   ./build.sh fetch            only download sources, rust and crates (needs internet)
 #   sbatch build.sh compile     compile on a compute node (after fetch, e.g. if the login node has no nvcc)
+#   ./build.sh clean            remove the build outputs (keeps sources, rust and crates), e.g. after changing modules:
+#                               make and cmake do not notice that, and cmake keeps the CUDA it found in its cache
 # `#ASC --vanilla`: plain Slurm on MUSICA, i.e. the options below apply as written (see README)
 #SBATCH --job-name=musica-nccl-build
 #SBATCH --nodes=1
@@ -84,12 +86,24 @@ compile() {
     # --locked: fail instead of resolving other crate versions than in Cargo.lock
     (cd CoMMA && LIBCLANG_PATH="$(llvm-config --libdir)" "$CARGO_HOME/bin/cargo" build --release --locked --jobs "$jobs")
 
-    ls -l "$NCCL_TESTS_BIN"/{all_reduce,broadcast}_perf "$NCCLBENCH_BIN" "$COMMA_PLUGIN" "$NCCLSEE_PLUGIN"
+    local outputs=("$NCCL_TESTS_BIN"/{all_reduce,broadcast}_perf "$NCCLBENCH_BIN" "$COMMA_PLUGIN" "$NCCLSEE_PLUGIN")
+    ls -l "${outputs[@]}"
+    # libraries that cannot be found with the modules loaded, e.g. outputs of an earlier build against another CUDA
+    if ldd "${outputs[@]}" | awk '/^\// {file = $0} /not found/ {print file, $0; missing = 1} END {exit !missing}'; then
+        echo "WARNING: missing libraries (see above); after changing modules: ./build.sh clean && ./build.sh compile" >&2
+    fi
+}
+
+clean() {
+    cd "$BUILD_DIR"
+    rm -rf nccl-tests/build lib-ncclbench/build ncclsee-cpp/build CoMMA/target
+    [ ! -d nccl/plugins/profiler/inspector ] || make -C nccl/plugins/profiler/inspector clean
 }
 
 case "${1:-all}" in
     fetch) fetch ;;
     compile) compile ;;
     all) fetch; compile ;;
-    *) echo "usage: $0 [fetch|compile|all]" >&2; exit 1 ;;
+    clean) clean ;;
+    *) echo "usage: $0 [fetch|compile|all|clean]" >&2; exit 1 ;;
 esac

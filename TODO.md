@@ -44,6 +44,8 @@ Open items first, roughly by priority; done items at the bottom with the date.
 ## Done
 
 ### 2026-10-21
+- [x] `libcudart.so.13` not found at runtime: binaries from an earlier build against another CUDA (make/cmake do not
+      rebuild after module changes); `./build.sh clean`, and `compile` warns about libraries `ldd` cannot find
 - [x] libclang for the CoMMA build: `LLVM/20.1.8-GCCcore-14.3.0` module, `LIBCLANG_PATH` set in `build.sh` (otherwise
       bindgen picks the incomplete system LLVM 21 in `/usr/lib64/llvm21`, whose libLLVM is missing)
 - [x] Module loads (NCCL 2.27.7 / CUDA 12.9.1, gompi 2025b, protobuf) and `CUDA_ARCH=90` in `config.sh`

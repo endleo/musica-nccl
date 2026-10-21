@@ -50,6 +50,7 @@ On the cluster (from the repository root, everything relative to it):
 ```sh
 git clone <this repo> musica-nccl && cd musica-nccl
 ./build.sh                  # or: ./build.sh fetch && sbatch build.sh compile
+                            # after changing modules: ./build.sh clean && ./build.sh compile
 sbatch experiments/quick.sbatch
 sbatch experiments/full.sbatch
 ```
