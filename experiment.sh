@@ -37,10 +37,10 @@ write_job_info() {
     for repo in nccl nccl-tests lib-ncclbench CoMMA ncclsee-cpp; do
         echo "$repo: $(git -C "$BUILD_DIR/$repo" describe --tags --always)"
     done
-    echo; echo "GPUs:"
-    srun --ntasks="$SLURM_NNODES" --ntasks-per-node=1 --gpu-bind=none \
-        bash -c 'echo "$(hostname -s): $(nvidia-smi -L | paste -sd" ")"'
-    # as the benchmarks see them (same launcher)
+    # as the benchmarks see them: same launcher and number of tasks (a step with fewer tasks may get fewer GPUs,
+    # e.g. one per task in MUSICA's comfort mode)
+    echo; echo "GPUs per node:"
+    $LAUNCHER bash -c '[ "$SLURM_LOCALID" != 0 ] || echo "$(hostname -s): $(nvidia-smi -L | paste -sd" ")"' 2>/dev/null | sort
     echo; echo "GPUs visible per rank (CUDA_VISIBLE_DEVICES, nvidia-smi):"
     $LAUNCHER bash -c 'echo "$(hostname -s) local rank $SLURM_LOCALID: ${CUDA_VISIBLE_DEVICES:-unset}, $(nvidia-smi -L | wc -l) GPUs"' 2>/dev/null | sort
     echo; echo "modules:"
