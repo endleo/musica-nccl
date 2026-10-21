@@ -13,11 +13,20 @@ load_modules() {
     module load LLVM/20.1.8-GCCcore-14.3.0
     module load CUDA/12.9.1
 
-    # taken from the modules if they set them, otherwise derived from nvcc/mpicc; set them here if that fails
-    NCCL_HOME="${NCCL_HOME:-${NCCL_ROOT:-${EBROOTNCCL:-}}}"  # EBROOTNCCL: set by EasyBuild modules
-    CUDA_HOME="${CUDA_HOME:-$(dirname "$(dirname "$(command -v nvcc)")")}"
-    MPI_HOME="${MPI_HOME:-$(dirname "$(dirname "$(command -v mpicc)")")}"
-    export LD_LIBRARY_PATH="$NCCL_HOME/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    # taken from the modules if they set them, otherwise derived from nvcc/mpicc; set them here if that fails.
+    # Exported, since profiled.sh needs them on every rank (see runtime_library_path)
+    export NCCL_HOME="${NCCL_HOME:-${NCCL_ROOT:-${EBROOTNCCL:-}}}"  # EBROOTNCCL: set by EasyBuild modules
+    export CUDA_HOME="${CUDA_HOME:-$(dirname "$(dirname "$(command -v nvcc)")")}"
+    export MPI_HOME="${MPI_HOME:-$(dirname "$(dirname "$(command -v mpicc)")")}"
+}
+
+# Library directories our binaries need at runtime. The modules on MUSICA come from EESSI (/cvmfs/software.eessi.io),
+# which does not set LD_LIBRARY_PATH: EESSI's own software finds its libraries via RUNPATH, ours does not. That
+# includes libstdc++ of the module's GCC (otherwise EESSI's older system libstdc++ is found: "CXXABI_1.3.15 not
+# found"). Only set for the benchmark processes (profiled.sh) and the check in build.sh, not for the whole job:
+# EESSI's libraries need EESSI's glibc and might break system programs.
+runtime_library_path() {
+    echo "$NCCL_HOME/lib:$CUDA_HOME/lib64:$MPI_HOME/lib${EBROOTGCCCORE:+:$EBROOTGCCCORE/lib64}"
 }
 
 # version of the NCCL in NCCL_HOME, e.g. 2.27.7

@@ -5,6 +5,9 @@ Open items first, roughly by priority; done items at the bottom with the date.
 ## Open
 
 ### Before the first run
+- [ ] EESSI: the CUDA runtime loads the GPU driver (`libcuda.so`) at runtime; EESSI programs only find the host's
+      driver if the admins set up EESSI's `host_injections` for it. If the quick run fails with "CUDA driver
+      version is insufficient" / "no CUDA-capable device", that is the place to look (or ask the admins)
 - [ ] Check that the module sets `NCCL_HOME` (or `NCCL_ROOT`) and whether its include directory has profiler
       headers (`module show <nccl>`, then `ls <prefix>/include`; NCCL's own install only ships `nccl.h`)
 - [ ] First build: does `build.sh fetch` work on the login node, does CoMMA build against the NCCL source checkout
@@ -44,6 +47,9 @@ Open items first, roughly by priority; done items at the bottom with the date.
 ## Done
 
 ### 2026-10-21
+- [x] EESSI modules set no `LD_LIBRARY_PATH` (`libcudart`/`libmpi` not found, `CXXABI_1.3.15` from the old system
+      libstdc++): `runtime_library_path` in `config.sh`, set for the benchmark processes in `profiled.sh` and for the
+      library check in `build.sh`
 - [x] `libcudart.so.13` not found at runtime: binaries from an earlier build against another CUDA (make/cmake do not
       rebuild after module changes); `./build.sh clean`, and `compile` warns about libraries `ldd` cannot find
 - [x] libclang for the CoMMA build: `LLVM/20.1.8-GCCcore-14.3.0` module, `LIBCLANG_PATH` set in `build.sh` (otherwise

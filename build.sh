@@ -88,8 +88,9 @@ compile() {
 
     local outputs=("$NCCL_TESTS_BIN"/{all_reduce,broadcast}_perf "$NCCLBENCH_BIN" "$COMMA_PLUGIN" "$NCCLSEE_PLUGIN")
     ls -l "${outputs[@]}"
-    # libraries that cannot be found with the modules loaded, e.g. outputs of an earlier build against another CUDA
-    if ldd "${outputs[@]}" | awk '/^\// {file = $0} /not found/ {print file, $0; missing = 1} END {exit !missing}'; then
+    # libraries that cannot be found at runtime (with the library path of profiled.sh), e.g. outputs of an earlier
+    # build against another CUDA
+    if LD_LIBRARY_PATH="$(runtime_library_path)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "${outputs[@]}" | awk '/^\// {file = $0} /not found/ {print file, $0; missing = 1} END {exit !missing}'; then
         echo "WARNING: missing libraries (see above); after changing modules: ./build.sh clean && ./build.sh compile" >&2
     fi
 }

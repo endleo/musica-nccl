@@ -13,4 +13,5 @@ shift 2
 
 mkdir -p "$out"
 profiler_env "$profiler" "$out" || exit 1
+export LD_LIBRARY_PATH="$(runtime_library_path)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec "$@"
