@@ -7,7 +7,8 @@
 # Same Slurm options as the working quick run (job 1863239): MUSICA's comfort mode (the default without the ASC
 # vanilla directive, see README), only nodes and GPUs are requested, MUSICA sets the rest. For full GPU nodes
 # (-N X --gres=gpu:4) that is 4 tasks per node, 22 CPUs per task (more than one core per rank matters: bound to a
-# single core, CoMMA's polling thread competes with NCCL's proxy thread), exclusive nodes, all memory. Every rank sees all GPUs of its node via --gpu-bind=none in LAUNCHER.
+# single core, CoMMA's polling thread competes with NCCL's proxy thread), exclusive nodes, all memory. Every rank
+# sees all GPUs of its node via --gpu-bind=none in LAUNCHER (config.sh).
 # TODO (TODO.md): switch to the explicit options and vanilla mode
 # Do not write the vanilla directive in comments here: MUSICA finds it anywhere in the file and enables vanilla mode
 #SBATCH --job-name=full
