@@ -15,7 +15,8 @@ Open items first, roughly by priority; done items at the bottom with the date.
 - [ ] After the first quick run: switch `experiments/quick.sbatch` from MUSICA's comfort mode to explicit options
       with `#ASC --vanilla` (as `full.sbatch`), so the batch files state their options without MUSICA-specific
       defaults; take the values from what comfort mode applied (`scontrol show job` in `job-info.txt`: tasks per
-      node, CPUs per task, exclusive, memory, GPU binding)
+      node, CPUs per task, exclusive, memory, GPU binding). Known from job 1863221: 4 tasks per node, 22 CPUs
+      per task, one GPU per task (-> `--gpu-bind=none` in `LAUNCHER`)
 - [ ] Check that `#ASC --vanilla` with the explicit options of `full.sbatch` and `build.sh` is accepted (MUSICA
       checks for required flags)
 - [ ] First `experiments/quick.sbatch` run: does `srun` launch the MPI ranks (PMI support of the MPI module;
@@ -47,6 +48,9 @@ Open items first, roughly by priority; done items at the bottom with the date.
 ## Done
 
 ### 2026-10-21
+- [x] Quick run 1863221 failed: comfort mode binds one GPU per task, but both benchmarks pick their GPU by local rank
+      among all visible GPUs ("invalid device ordinal"); `--gpu-bind=none` in `LAUNCHER`. If MUSICA restricts the
+      GPUs per task via cgroups, that is not enough -> switch quick to the explicit options of full.sbatch
 - [x] EESSI modules set no `LD_LIBRARY_PATH` (`libcudart`/`libmpi` not found, `CXXABI_1.3.15` from the old system
       libstdc++): `runtime_library_path` in `config.sh`, set for the benchmark processes in `profiled.sh` and for the
       library check in `build.sh`

@@ -38,9 +38,11 @@ write_job_info() {
         echo "$repo: $(git -C "$BUILD_DIR/$repo" describe --tags --always)"
     done
     echo; echo "GPUs:"
-    srun --ntasks-per-node=1 bash -c 'echo "$(hostname -s): $(nvidia-smi -L | paste -sd" ")"'
-    echo; echo "GPUs visible per rank (CUDA_VISIBLE_DEVICES):"
-    srun bash -c 'echo "$(hostname -s) local rank $SLURM_LOCALID: ${CUDA_VISIBLE_DEVICES:-unset}"' | sort
+    srun --ntasks="$SLURM_NNODES" --ntasks-per-node=1 --gpu-bind=none \
+        bash -c 'echo "$(hostname -s): $(nvidia-smi -L | paste -sd" ")"'
+    # as the benchmarks see them (same launcher)
+    echo; echo "GPUs visible per rank (CUDA_VISIBLE_DEVICES, nvidia-smi):"
+    $LAUNCHER bash -c 'echo "$(hostname -s) local rank $SLURM_LOCALID: ${CUDA_VISIBLE_DEVICES:-unset}, $(nvidia-smi -L | wc -l) GPUs"' 2>/dev/null | sort
     echo; echo "modules:"
     module list 2>&1
     # everything Slurm applied (incl. what MUSICA's comfort mode set)

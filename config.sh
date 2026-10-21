@@ -49,7 +49,9 @@ check_nccl_version() {
 CUDA_ARCH="90"
 
 # launcher for the benchmarks inside the job, one process per task
-LAUNCHER="srun --cpu-bind=verbose"
+# --gpu-bind=none: every rank sees all GPUs of its node; both benchmarks pick their GPU by the local rank among all
+# visible GPUs, so with one GPU per rank (e.g. MUSICA's comfort mode) ranks 1-3 fail ("invalid device ordinal")
+LAUNCHER="srun --cpu-bind=verbose --gpu-bind=none"
 # alternative if srun has no matching PMI support for the MPI module:
 # LAUNCHER="mpirun"
 
