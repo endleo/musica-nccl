@@ -5,6 +5,9 @@ build/
 logs/*
 !logs/.gitkeep
 
+# results
+results/
+
 # created by the analysis
 profiler-out-extracted/
 *.pdf
