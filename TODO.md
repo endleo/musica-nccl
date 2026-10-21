@@ -36,6 +36,19 @@ Open items first, roughly by priority; done items at the bottom with the date.
 - [ ] With NCCL >= 2.29.2: check that the broadcast workaround (`NCCL_ALLGATHERV_ENABLE=0`) is still needed
 
 ### Experiment
+- [ ] **CoMMA has no times for ranks that only communicate within their node** (full run 1863257: only 61-69 % of
+      the calls have a time, ncclsee ~100 %). CoMMA records every call, but its time (`child_dur`) comes from child
+      events, by default only proxy ops (network transfers). Ranks without a network transfer in an op never get a
+      child and the op is reclaimed after the timeout. Small sizes: AllReduce only ranks 0/4 (tree), Broadcast only
+      ranks 2/4 (ring) have times; from 128-256 KiB on all ranks (more channels). Not visible on Chameleon (1 GPU per
+      node, every rank on the network). Options:
+  - `NCCL_PROFILER_TRACK_KERNEL_CH=true` (CoMMA option, default false): kernel channels as children too, so every
+    rank gets a time, but `child_dur` then means something else than on Chameleon (kernel instead of proxy time)
+  - 1 rank per node (as on Chameleon; e.g. `--gres=gpu:1` per node), same semantics as on Chameleon
+  - keep it, and only compare CoMMA on the ranks it has times for (the max over ranks in the violin plots is then
+    over a subset of the ranks)
+- [ ] All three iterations of 1863257 ran on the same two nodes (n3010-021, n3015-015); for node-to-node variation
+      (as on Chameleon, fresh servers per run) exclude previously used nodes or submit iterations separately
 - [ ] CoMMA: raise `NCCL_PROFILER_NCCLOP_TIMEOUT` (default 10s, e.g. `60s`); on Chameleon nccl-tests lost large
       ops that were reclaimed without `child_dur` (see Chameleon TODO)
 - [ ] Optional: baseline run without any profiler, to quantify profiler overhead
@@ -48,6 +61,8 @@ Open items first, roughly by priority; done items at the bottom with the date.
 ## Done
 
 ### 2026-10-21
+- [x] Full experiment 1863257 (3 iterations, CoMMA + ncclsee, 8 B - 1 GiB): all steps succeeded, nccl-tests validation
+      OK, ncclbench complete; ncclsee recorded ~100 % of the calls, CoMMA see the open item above
 - [x] CPU binding (`--cpu-bind=verbose` in the job output): 22 cores per rank in comfort mode (job 1863239)
 - [x] `experiments/full.sbatch` uses the same Slurm options as the successful quick run (comfort mode,
       `-N 2 --gres=gpu:4`), regular QoS, so it can be queued as is
