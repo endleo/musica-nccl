@@ -309,7 +309,7 @@ def paired_iterations(df):
     """
     ncclbench iterations with the benchmark time and the profiler time of the same call side by side: one row per
     (run, test, operation, profiler, size_bytes, iteration) with t_benchmark, t_profiler [s] (profiler: max over
-    ranks, the same reduction as ncclbench), ratio (profiler / benchmark) and difference_us (benchmark - profiler)
+    ranks, the same reduction as ncclbench) and ratio (profiler / benchmark)
     """
     reduced = max_over_ranks(df[df["benchmark"] == "ncclbench"])
     keys = ["run", "test", "operation", "profiler", "size_bytes", "iteration"]
@@ -317,7 +317,6 @@ def paired_iterations(df):
     paired = paired.rename(columns={"benchmark": "t_benchmark", "profiler": "t_profiler"}).reset_index()
     paired.columns.name = None
     paired["ratio"] = paired["t_profiler"] / paired["t_benchmark"]
-    paired["difference_us"] = (paired["t_benchmark"] - paired["t_profiler"]) * 1e6
     return paired
 
 
@@ -658,25 +657,23 @@ def _monospace_ncclsee(texts):
             text.set_fontfamily("monospace")
 
 
-def plot_latency_by_size(df, profilers=PROFILERS, compare="ratio", partial=None):
+def plot_latency_by_size(df, profilers=PROFILERS):
     """
     ncclbench latencies over all message sizes, one column per operation: top median latency of the profiler (solid)
-    and of the benchmark (dashed) per profiler run; bottom the profiler vs. the benchmark time of the same call,
+    and of the benchmark (dashed) per profiler run; bottom the ratio profiler / benchmark time of the same call,
     median with the interquartile range as band. Uses all iterations of all runs in `df` (from load_run(s)).
 
-    compare: "ratio" (profiler / benchmark) or "difference" (benchmark - profiler, in us)
-    partial: optional {profiler: {operation: sizes}} where the profiler has times for only some ranks (shaded, since
-             its max over ranks then only covers those ranks), e.g. from record_counts(..., by_size=True)
+    Where a profiler has times for only some ranks (CoMMA, small sizes on several GPUs per node, see
+    record_counts(..., by_size=True)), its max over ranks only covers those ranks; worth a note in the caption.
     """
     paired = paired_iterations(df)
     profilers = [p for p in profilers if p in set(paired["profiler"])]
     operations = sorted(paired["operation"].unique(), key=lambda o: list(OPERATION_LABELS).index(o)
                         if o in OPERATION_LABELS else 99)
-    column = {"ratio": "ratio", "difference": "difference_us"}[compare]
     g = paired.groupby(["operation", "profiler", "size_bytes"])
     stats = pd.DataFrame({
         "t_benchmark": g["t_benchmark"].median(), "t_profiler": g["t_profiler"].median(),
-        "median": g[column].median(), "q25": g[column].quantile(0.25), "q75": g[column].quantile(0.75),
+        "median": g["ratio"].median(), "q25": g["ratio"].quantile(0.25), "q75": g["ratio"].quantile(0.75),
     }).reset_index()
 
     with plt.rc_context(PLOT_STYLE):
@@ -695,34 +692,24 @@ def plot_latency_by_size(df, profilers=PROFILERS, compare="ratio", partial=None)
                                     zorder=2)
                 bottom.plot(sel["size_bytes"], sel["median"], marker=marker, markersize=4, markeredgecolor="white",
                             markeredgewidth=0.6, **style)
-                for size in (partial or {}).get(profiler, {}).get(operation, []):
-                    for ax in (top, bottom):
-                        ax.axvspan(size / 2**0.5, size * 2**0.5, color="#ececec", linewidth=0, zorder=0)
 
             sizes = stats.loc[stats["operation"] == operation, "size_bytes"].unique()
             top.set_yscale("log")
             top.set_title(OPERATION_LABELS.get(operation, operation))
             _size_axis(top, sizes, label=False)
             _size_axis(bottom, sizes)
-            if compare == "ratio":
-                bottom.axhline(1, color="gray", linestyle="-.", linewidth=1, zorder=1)
-                bottom.set_ylim(0, max(1.1, stats["q75"].max() * 1.05))
-            else:
-                bottom.axhline(0, color="gray", linestyle="-.", linewidth=1, zorder=1)
-                bottom.set_yscale("symlog", linthresh=10)
+            bottom.axhline(1, color="gray", linestyle="-.", linewidth=1, zorder=1)
+            bottom.set_ylim(0, max(1.1, stats["q75"].max() * 1.05))
             for ax in (top, bottom):
                 ax.yaxis.grid(True, linestyle=":", color="lightgray", zorder=0)
         axs[0][0].set_ylabel("Median latency [µs]")
-        axs[1][0].set_ylabel("Profiler / benchmark" if compare == "ratio" else "Benchmark − profiler [µs]")
+        axs[1][0].set_ylabel("Profiler / benchmark")
 
         handles = [Line2D([], [], color=PROFILER_LINE_COLORS.get(p), marker=PROFILER_MARKERS.get(p, "o"),
                           markeredgecolor="white", linewidth=1.5, label=PROFILER_LABELS.get(p, p)) for p in profilers]
         handles += [Line2D([], [], color="gray", linewidth=1.5, label="profiler"),
                     Line2D([], [], color="gray", linestyle="--", linewidth=1.5, label="benchmark (top)"),
                     Patch(facecolor="gray", alpha=0.3, label="interquartile range (bottom)")]
-        if partial and any(any(v.values()) for v in partial.values()):
-            names = ", ".join(PROFILER_LABELS.get(p, p) for p, ops in partial.items() if any(ops.values()))
-            handles.append(Patch(facecolor="#ececec", label=f"{names}: times from some ranks only"))
         leg = fig.legend(handles=handles, loc="outside lower center", ncol=4)
         _monospace_ncclsee(leg.get_texts())
     return fig

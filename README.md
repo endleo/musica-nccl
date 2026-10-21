@@ -126,8 +126,7 @@ A short summary to send around (text written for run 1863257, figures from the a
 `analyze.py` writes `violins.pdf` per iteration and per run:
 
 - `recorded_operations.pdf`, `recorded_by_size.pdf`: share of the NCCL calls with a recorded time (total, per size)
-- `latency_ratio.pdf`, `latency_difference.pdf`: ncclbench latencies over all sizes, and profiler vs. benchmark time
-  of the same call as ratio or as difference in µs (two versions of the same figure)
+- `latency_ratio.pdf`: ncclbench latencies over all sizes, and the ratio profiler / benchmark time of the same call
 - `iteration_consistency.pdf`: per size, how far each iteration's median is from the median over all iterations,
   against the spread within an iteration
 - `reported_times.txt`: mean times per size, as the tables in the Chameleon notebook
