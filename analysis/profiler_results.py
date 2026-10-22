@@ -14,7 +14,9 @@ Profiler output formats (derived from the profilers' source code):
     inspector  <host>-pid<pid>.log, one JSON object per op; coll_perf.coll_exec_time_us [us, integer] =
                max kernel execution time over all channels (GPU timer)
     ncclsee    tracer mode: comm_<hash>/<name>.json, chrome trace ("traceEvents"), begin event per op;
-               args.runtime_us = collective start to last kernel channel end
+               args.runtime_us = CPU duration of the collective event (its enqueue, = eventDur_us) + GPU time from
+               the first kernel channel start to the last kernel channel end (pTimer); the gap between the two
+               (kernel launch) is not included (ncclsee v4/events/event.cpp, Collective::runtime)
                profiler mode: comm_<hash>/<name>.csv with per (op, count) totals only -> no distribution
 
 All times in the resulting DataFrames are in seconds (column time_s).
@@ -137,7 +139,7 @@ def _ncclsee_trace_events(path):
 
 
 def load_ncclsee(directory, metric=PROFILER_METRICS["ncclsee"]):
-    """metric: "runtime" (start to last kernel channel end, default) or "eventDur" (collective event only)"""
+    """metric: "runtime" (enqueue + kernel execution, default, see module docstring) or "eventDur" (enqueue only)"""
     directory = Path(directory)
     rows = []
     for path in sorted(directory.glob("comm_*/*.json")):
