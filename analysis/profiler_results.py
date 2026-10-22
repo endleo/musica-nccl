@@ -9,8 +9,11 @@ Layout of a run folder (one iteration), as written by experiment.sh:
         profiler-out/<profiler>/<test>/<host>/...
 
 Profiler output formats (derived from the profilers' source code):
-    comma      latency-<pid>.txt, one JSON object per op; "child_dur" [us] = first child (proxy op /
-               kernel channel) start to last child end, "dur" [us] = from collective enqueue to that end
+    comma      latency-<pid>.txt, one JSON object per op; "child_dur" [us, integer] = earliest start to latest
+               end of the op's child events, CPU clock; by default the children are only proxy ops (network
+               transfers, timed on NCCL's proxy thread), kernel channels only with NCCL_PROFILER_TRACK_KERNEL_CH=true.
+               Ranks without a network transfer in an op get no child_dur (reclaimed). "dur" [us] = from the
+               collective's start (enqueue) to that end (src/event.rs, src/daemon.rs)
     inspector  <host>-pid<pid>.log, one JSON object per op; coll_perf.coll_exec_time_us [us, integer] =
                max kernel execution time over all channels (GPU timer)
     ncclsee    tracer mode: comm_<hash>/<name>.json, chrome trace ("traceEvents"), begin event per op;
