@@ -41,7 +41,7 @@ All runs completed, nccl-tests validated its results, and both profilers produce
   image(fig("recorded_by_size.pdf"), width: 100%),
   caption: [Share of the NCCL calls with a recorded time, per message size (all ranks, incl. warm-ups, 3
     iterations). Solid: nccl-tests, dashed: ncclbench.],
-)
+) <recorded>
 
 The missed calls are small and medium messages. CoMMA derives the time of an operation from its child events, by
 default only from proxy operations (network transfers); kernel-channel events are off by default
@@ -49,7 +49,8 @@ default only from proxy operations (network transfers); kernel-channel events ar
 in an operation, never get a time, and their records are reclaimed. With small messages NCCL uses a single channel,
 so only the two GPUs where it crosses between the nodes use the network (25 % = 2 of 8 ranks). Larger messages use
 more channels, which cross the nodes at different GPUs, until every GPU has a network transfer: from 256 KiB
-(AllReduce) or 1 MiB (Broadcast) on, CoMMA records 100 %. On Chameleon (one GPU per node, every rank on the network)
+(AllReduce) or 128 KiB -- 2 MiB (Broadcast, depending on the benchmark) on, CoMMA records 100 % (details on the
+algorithms and channels: @algorithms). On Chameleon (one GPU per node, every rank on the network)
 this did not show up.
 
 #figure(
@@ -73,7 +74,7 @@ low for small messages (about 0.4): there it only measures the network transfer 
     interquartile range. Profiler times are the maximum over the ranks (the same reduction as ncclbench). Note: up to
     128 KiB (AllReduce) and 32 KiB (Broadcast), CoMMA has times only for some of the ranks (see above), so its
     maximum covers only those ranks.],
-)
+) <fig-latency>
 
 #figure(
   image(fig("01/violins.pdf"), width: 100%),
@@ -167,6 +168,69 @@ channels as child events.
 For the comparison with ncclbench, the profiler times of a call are reduced to the maximum over the ranks, like
 ncclbench's own times. For nccl-tests, all records of a size are averaged (including its warm-up, synchronization and
 validation calls, which the profilers cannot tell apart).
+
+=== Algorithms and protocols <algorithms>
+
+Both profilers record, for every call, the algorithm, the protocol and the number of channels NCCL chose. The two
+profilers agree on every size, and the choice is the same in nccl-tests and ncclbench, in all three iterations and on
+all ranks:
+
+#figure(
+  table(
+    columns: 4,
+    align: (left, left, left, right),
+    stroke: none,
+    table.hline(),
+    table.header([*message size*], [*algorithm*], [*protocol*], [*channels*]),
+    table.hline(stroke: 0.5pt),
+    [8 B -- 4 KiB], [tree], [LL], [1],
+    [8 KiB], [tree], [LL], [2],
+    [16 KiB], [tree], [LL], [4],
+    [32 KiB -- 64 KiB], [tree], [LL], [8],
+    [128 KiB -- 1 MiB], [tree], [LL128], [8],
+    [*2 MiB*], [*ring*], [LL128], [8],
+    [4 MiB -- 64 MiB], [tree], [LL128], [8],
+    [128 MiB -- 1 GiB], [tree], [SIMPLE], [8],
+    table.hline(),
+  ),
+  caption: [AllReduce: algorithm, protocol and channels NCCL 2.27.7 chose per message size (2 nodes × 4 H100).],
+) <algo-allreduce>
+
+#figure(
+  table(
+    columns: 4,
+    align: (left, left, left, right),
+    stroke: none,
+    table.hline(),
+    table.header([*message size*], [*algorithm*], [*protocol*], [*channels*]),
+    table.hline(stroke: 0.5pt),
+    [8 B -- 32 KiB], [ring], [LL], [1],
+    [64 KiB], [ring], [LL], [2],
+    [128 KiB], [ring], [LL], [4],
+    [256 KiB -- 512 KiB], [ring], [LL], [8],
+    [1 MiB -- 64 MiB], [ring], [LL128], [8],
+    [128 MiB -- 1 GiB], [ring], [SIMPLE], [8],
+    table.hline(),
+  ),
+  caption: [Broadcast: algorithm, protocol and channels per message size.],
+) <algo-broadcast>
+
+- *Algorithm*: ring passes the data from GPU to GPU along a ring; tree reduces and broadcasts along trees (inside a
+  node as a chain, between the nodes as a tree). AllReduce uses tree at all sizes except 2 MiB, where it uses ring;
+  this is the outlier in @fig-latency (the `ncclsee` ratio jumps to about 1.0 there). Why NCCL's tuning chooses ring
+  at exactly this size is not visible from the data. Broadcast always uses ring.
+- *Protocol*: LL (low latency) sends 8-byte words with a flag each, so only half of the bandwidth carries data; LL128
+  uses 128-byte lines with much less overhead; SIMPLE uses the full bandwidth with the highest latency per step.
+  AllReduce switches from LL to LL128 at 128 KiB, Broadcast only at 1 MiB; both switch to SIMPLE at 128 MiB.
+- *Channels*: the number of rings/trees used in parallel grows with the message size before the protocol changes
+  (AllReduce: 8 channels from 32 KiB, Broadcast: from 256 KiB). Each channel can cross between the nodes at a
+  different GPU, so more channels give more GPUs a network transfer, and CoMMA's gaps (@recorded) close as the size
+  grows: completely from 256 KiB for AllReduce (both benchmarks), from 128 KiB (ncclbench) or 2 MiB (nccl-tests) for
+  Broadcast. It is not one-to-one, though: AllReduce in ncclbench stays at 25 % even with 8 channels (32 -- 64 KiB),
+  so there all trees apparently cross the nodes at the same GPUs (not verified).
+- Since the choice is the same in both benchmarks, it does not explain why CoMMA's coverage differs between nccl-tests
+  and ncclbench (AllReduce 8 -- 128 KiB, Broadcast 64 KiB -- 1 MiB); that has to come from elsewhere (e.g. nccl-tests
+  enqueues 20 calls back to back).
 
 === Example: Broadcast, 8 B <bcast-example>
 
