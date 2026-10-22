@@ -211,3 +211,48 @@ of all ranks start at about the same time (ncclbench synchronizes the ranks with
 The longer enqueue on rank 0 and rank 2 (the root and the network sender) was not investigated further. With more
 channels (larger messages), every GPU has a network transfer and CoMMA's times converge to the others.
 
+=== Example: Broadcast, 1 GiB <bcast-example-large>
+
+#figure(
+  table(
+    columns: 7,
+    align: (center, center, right, right, right, right, right),
+    stroke: none,
+    table.hline(),
+    table.header([*rank*], [*node*], [*CoMMA* \ `child_dur`], [*CoMMA* \ `dur`], [*`ncclsee`* \ `runtime_us`],
+      [*`ncclsee`* \ enqueue], [*`ncclsee`* \ kernel]),
+    table.hline(stroke: 0.5pt),
+    [0 (root)], [1], [11.162], [11.203], [10.908], [0.009], [10.895],
+    [1], [1], [11.512], [11.526], [11.542], [0.009], [11.533],
+    [2], [1], [11.446], [11.461], [11.470], [0.010], [11.455],
+    [3], [1], [11.436], [11.457], [11.552], [0.006], [11.545],
+    [4], [2], [11.429], [11.439], [11.360], [0.008], [11.352],
+    [5], [2], [11.429], [11.445], [11.394], [0.015], [11.377],
+    [6], [2], [11.485], [11.499], [11.379], [0.010], [11.366],
+    [7], [2], [11.286], [11.295], [11.337], [0.011], [11.326],
+    table.hline(),
+  ),
+  caption: [Broadcast of 1 GiB (ncclbench, iteration 01): median times per rank in *ms*, over the 50 calls. CoMMA and
+    `ncclsee` come from separate runs; medians are taken per column.],
+)
+
+For large messages NCCL uses 8 rings (channels) with the SIMPLE protocol. Each ring crosses between the nodes at
+different GPUs, so every GPU sends or receives part of the data over the network, and the data is cut into chunks
+that move along the rings one after the other (pipelining): all ranks are busy for almost the whole call, and the time
+is determined by the bandwidth (1 GiB in about 11.5 ms, about 93 GB/s).
+
+- every rank has a CoMMA time (none of its records was reclaimed), and CoMMA's network time and `ncclsee`'s kernel time
+  of a rank agree within 1 %, except for the root (2.4 %, see below)
+- the per-call overheads that dominated at 8 B (enqueue 6 -- 15 µs, launch, waiting for the stream) are
+  insignificant against 11.5 ms
+- maximum over the ranks per call (medians, iteration 01): 11.51 ms (CoMMA) and 11.55 ms (`ncclsee`), against
+  11.56 ms measured by ncclbench in both runs: the profilers report 99.6 % (CoMMA) and 99.9 % (`ncclsee`) of the
+  benchmark time
+- the root (rank 0) finishes first: it only sends, and its kernel is done once it has handed over its last chunk,
+  while the other ranks still receive and forward it. CoMMA's time on rank 0 is about 0.27 ms longer than `ncclsee`'s
+  kernel time, presumably because the proxy thread is still sending the last chunks over the network after the
+  kernel has handed them over (not verified)
+
+So for large messages both profilers measure essentially the same thing as the benchmark: the data transfer, which
+takes almost all of the time.
+
