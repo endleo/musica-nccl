@@ -60,9 +60,11 @@ this did not show up.
 == Latencies
 
 Both profilers report lower times than the benchmarks for small messages: the benchmarks measure the wall-clock time
-of a call including the launch overhead, the profilers the operation itself. Per call, the profiler time is about
-0.45 -- 0.75 of the benchmark time for small messages (CoMMA Broadcast about 0.4) and converges to about 1.0 for large
-ones (at 1 GiB within about 2 %; AllReduce of 1 GiB: about 12.5 ms).
+of a call including the launch overhead, the profilers only parts of the operation (what exactly: @measured). Per
+call, the profiler time is about 0.45 -- 0.75 of the benchmark time for small messages and converges to about 1.0 for
+large ones (at 1 GiB within about 2 %; AllReduce of 1 GiB: about 12.5 ms). CoMMA's Broadcast times are particularly
+low for small messages (about 0.4): there it only measures the network transfer between the nodes, see the example in
+@bcast-example.
 
 #figure(
   image(fig("latency_ratio.pdf"), width: 100%),
@@ -109,3 +111,103 @@ All iterations ran on the same two nodes.
 - NCCL from the module (possibly tuned for the machine, but no Inspector) vs. an own build of a newer NCCL (all three
   profilers, same version as on Chameleon)
 - the outlier iterations of the `ncclsee` run (above), and iterations on different nodes, for node-to-node variation
+
+#pagebreak()
+// appendix: A, A.1, ... (the main part has no numbered headings); references read "Appendix A.1"
+#set heading(numbering: (..n) => if n.pos().len() >= 2 { numbering("A.1", ..n.pos().slice(1)) },
+  supplement: [Appendix])
+#counter(heading).update(0)
+
+== What is measured <measured>
+
+All of this is taken from the source code of the versions used (lib-ncclbench `3b9d2c4`, nccl-tests v2.19.6, CoMMA
+`1d5b967`, `ncclsee` `0e8433a`).
+
+=== Benchmarks
+
+*ncclbench* (`--blocking`, the per-call times used in the latency figures). For every call, on every rank:
+`MPI_Barrier`; start of the timer (`MPI_Wtime`); the NCCL call; `cudaStreamSynchronize`; end of the timer. The time
+of a call is the maximum of these intervals over all ranks, minus the mean duration of an empty
+`cudaStreamSynchronize` (measured once, 1.4 µs here). So it is the wall-clock time of the call on the host: enqueue,
+kernel launch, execution, and waiting for the GPU. 5 warm-up calls per size are not reported. Broadcast uses rank 0 as
+root.
+
+*nccl-tests* (default mode). Per size: one synchronizing call and a barrier; start of the timer; 20 calls enqueued
+back to back without waiting; one stream synchronization at the end; end of the timer; divided by 20. The result is
+averaged over the ranks (not the maximum). Since the calls are not waited for individually, the enqueue and launch of
+a call overlap with the execution of the previous one: this is the time per call in a stream of calls, not the
+latency of a single call, and there are no per-call times.
+
+Both benchmark times include the profiler's own overhead on the host: for 8 B Broadcast, ncclbench measures about
+21 µs in the CoMMA runs and 23 -- 29 µs in the `ncclsee` runs (a run without profiler as baseline is still open).
+
+=== Profilers
+
+#table(
+  columns: (auto, 1fr, 1fr),
+  align: left,
+  stroke: 0.5pt + luma(180),
+  table.header([], [*`ncclsee`* (`runtime_us`)], [*CoMMA* (`child_dur`)]),
+  [What], [enqueue of the call on the host + execution of the GPU kernel],
+    [the call's network transfers (NCCL proxy operations), from the earliest start to the latest end],
+  [Clock], [enqueue: CPU; kernel: GPU timer, read by the kernel itself], [CPU (NCCL's proxy thread)],
+  [Computed as], [CPU duration of the collective event + (last kernel channel end − first kernel channel start)],
+    [latest proxy-op end − earliest proxy-op start],
+  [Not included], [the gap between enqueue and kernel start (launch)],
+    [enqueue, launch, GPU work before and after the transfer],
+  [Ranks], [all], [only ranks with a network transfer in the call],
+  [Resolution], [below 1 µs], [1 µs],
+)
+
+The `ncclsee` time thus adds two intervals measured on two different clocks; it is not an interval on a single
+timeline. CoMMA's alternative field `dur` (not used) runs from the start of the call on the host to the end of the
+last network transfer. With `NCCL_PROFILER_TRACK_KERNEL_CH=true` (off by default), CoMMA would also count the kernel
+channels as child events.
+
+For the comparison with ncclbench, the profiler times of a call are reduced to the maximum over the ranks, like
+ncclbench's own times. For nccl-tests, all records of a size are averaged (including its warm-up, synchronization and
+validation calls, which the profilers cannot tell apart).
+
+=== Example: Broadcast, 8 B <bcast-example>
+
+#figure(
+  table(
+    columns: 7,
+    align: (center, center, right, right, right, right, right),
+    stroke: none,
+    table.hline(),
+    table.header([*rank*], [*node*], [*CoMMA* \ `child_dur`], [*CoMMA* \ `dur`], [*`ncclsee`* \ `runtime_us`],
+      [*`ncclsee`* \ enqueue], [*`ncclsee`* \ kernel]),
+    table.hline(stroke: 0.5pt),
+    [0 (root)], [1], [--], [--], [5.9], [4.4], [1.5],
+    [1], [1], [--], [--], [4.7], [1.5], [3.1],
+    [2], [1], [6.0], [14.0], [15.6], [9.6], [3.5],
+    [3], [1], [--], [--], [3.3], [1.6], [1.7],
+    [4], [2], [8.0], [15.0], [20.7], [1.9], [18.8],
+    [5], [2], [--], [--], [21.9], [1.6], [20.3],
+    [6], [2], [--], [--], [22.3], [1.6], [20.4],
+    [7], [2], [--], [--], [21.0], [1.6], [19.2],
+    table.hline(),
+  ),
+  caption: [Broadcast of 8 B (ncclbench, iteration 01): median times per rank in µs, over the 50 calls. CoMMA and
+    `ncclsee` come from separate runs. Medians are taken per column, so `runtime_us` is not exactly the sum of the
+    two columns to its right.],
+)
+
+For small messages NCCL uses a single ring through all 8 GPUs. Rank 0 (the root) passes the data on within its node,
+rank 2 sends it over the network, rank 4 receives it and passes it on to the other GPUs of the second node. The kernels
+of all ranks start at about the same time (ncclbench synchronizes the ranks with a barrier before every call):
+
+- ranks 0 -- 3 (node 1, with the root) get the data over NVLink and are done after 1.5 -- 3.5 µs of kernel time;
+  rank 2's kernel only hands the data to its proxy thread, the network send itself runs on the CPU
+- ranks 4 -- 7 (node 2) wait in their kernels until the data has crossed the network (rank 2's proxy sends, rank 4's
+  proxy receives), about 19 -- 20 µs, then pass it on over NVLink
+- `ncclsee` measures every rank's kernel; its maximum over the ranks (about 21 µs per call) is dominated by the waiting
+  on node 2, as is ncclbench's time (about 21 -- 29 µs)
+- CoMMA only measures the network transfer, on the only two ranks that have one: 6 µs on rank 2 (send), 8 µs on rank 4
+  (receive). Its maximum over the ranks is 8 µs per call, less than half of everything else, because the waiting
+  in the kernels before the transfer and the forwarding afterwards are not part of it.
+
+The longer enqueue on rank 0 and rank 2 (the root and the network sender) was not investigated further. With more
+channels (larger messages), every GPU has a network transfer and CoMMA's times converge to the others.
+
