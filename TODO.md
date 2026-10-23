@@ -4,26 +4,6 @@ Open items first, roughly by priority; done items at the bottom with the date.
 
 ## Open
 
-### Before the first run
-- [ ] EESSI: the CUDA runtime loads the GPU driver (`libcuda.so`) at runtime; EESSI programs only find the host's
-      driver if the admins set up EESSI's `host_injections` for it. If the quick run fails with "CUDA driver
-      version is insufficient" / "no CUDA-capable device", that is the place to look (or ask the admins)
-- [ ] Check that the module sets `NCCL_HOME` (or `NCCL_ROOT`) and whether its include directory has profiler
-      headers (`module show <nccl>`, then `ls <prefix>/include`; NCCL's own install only ships `nccl.h`)
-- [ ] First build: does `build.sh fetch` work on the login node, does CoMMA build against the NCCL source checkout
-      (on Chameleon it was a built NCCL tree), does it build with the modules in `config.sh`?
-- [ ] Switch `experiments/quick.sbatch` and `experiments/full.sbatch` from MUSICA's comfort mode to explicit
-      options with `#ASC --vanilla`, so the batch files state their options without MUSICA-specific defaults;
-      take the values from what comfort mode applied (`scontrol show job` in `job-info.txt`). Known from jobs
-      1863221/1863239: 4 tasks per node, 22 CPUs per task, exclusive, one GPU per task (-> `--gpu-bind=none` in
-      `LAUNCHER`). The explicit options full.sbatch had before (untested): `--ntasks-per-node=4 --exclusive
-      --cpus-per-task=8 --gres=gpu:4`, no per-task GPU binding
-- [ ] Check that `#ASC --vanilla` with the explicit options of `build.sh` is accepted (MUSICA checks for required
-      flags)
-- [ ] First `experiments/quick.sbatch` run: does `srun` launch the MPI ranks (PMI support of the MPI module;
-      otherwise `LAUNCHER="mpirun"` in `config.sh`, which needs `-x` for the environment), do the 4 ranks per
-      node get different GPUs (nccl-tests prints the device per rank), does it finish in < 10 min?
-
 ### NCCL version / Inspector
 - [ ] Decide between the module's NCCL (2.27.7) and building NCCL ourselves:
   - module: no NCCL Inspector (needs profiler API v5, NCCL 2.27 loads up to v4), and a different NCCL version
@@ -34,6 +14,8 @@ Open items first, roughly by priority; done items at the bottom with the date.
   - possibly both: compare the module's NCCL with an own build of 2.27.7 without profilers first, to see if
     the module is tuned at all; check the module's environment (`module show`, `NCCL_*` variables it sets)
 - [ ] With NCCL >= 2.29.2: check that the broadcast workaround (`NCCL_ALLGATHERV_ENABLE=0`) is still needed
+- [ ] Check that the module sets `NCCL_HOME` (or `NCCL_ROOT`) and whether its include directory has profiler
+      headers (`module show <nccl>`, then `ls <prefix>/include`; NCCL's own install only ships `nccl.h`)
 
 ### Experiment
 - [ ] **CoMMA has no times for ranks that only communicate within their node** (full run 1863257: only 60-69 % of
@@ -53,6 +35,12 @@ Open items first, roughly by priority; done items at the bottom with the date.
       ops that were reclaimed without `child_dur` (see Chameleon TODO)
 - [ ] Optional: baseline run without any profiler, to quantify profiler overhead
 - [ ] nccl-tests: more warmups/iterations (`-w 5 -n 50`) for comparability with ncclbench
+- [ ] Switch `experiments/quick.sbatch` and `experiments/full.sbatch` from MUSICA's comfort mode to explicit
+      options with `#ASC --vanilla`, so the batch files state their options without MUSICA-specific defaults;
+      take the values from what comfort mode applied (`scontrol show job` in `job-info.txt`). Known from jobs
+      1863221/1863239: 4 tasks per node, 22 CPUs per task, exclusive, one GPU per task (-> `--gpu-bind=none` in
+      `LAUNCHER`). The explicit options full.sbatch had before (untested): `--ntasks-per-node=4 --exclusive
+      --cpus-per-task=8 --gres=gpu:4`, no per-task GPU binding
 
 ### Analysis
 - [ ] Run 1863257, `iteration_consistency.pdf`: ncclsee run differs between iterations by up to 28 % (benchmark) /
@@ -60,7 +48,7 @@ Open items first, roughly by priority; done items at the bottom with the date.
       sizes, it 03 AllReduce up to 2 MiB higher); CoMMA run within 5 % (benchmark) / 12.5 % (CoMMA, it 03 AllReduce
       small sizes). Same nodes in all iterations -> look at the per-iteration distributions
 - [ ] ncclsee, AllReduce 2 MiB: profiler and benchmark time about equal (ratio ~1, elsewhere ~0.8); NCCL uses ring
-      instead of tree at that size (CoMMA records)
+      instead of tree at that size and *only* that size (CoMMA records)
 - [ ] Tests for the analysis (the Chameleon project has a pytest suite for `profiler_results.py`; this copy
       only differs in `_profiler_dirs`)
 
