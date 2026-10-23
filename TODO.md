@@ -66,6 +66,10 @@ Open items first, roughly by priority; done items at the bottom with the date.
 
 ## Done
 
+### 2026-10-23
+- [x] Environment logged: of the job in `job-info.txt`, per rank (with the profiler settings) as `env-rank<N>.txt`
+      in the profiler outputs; names that look like credentials are left out
+
 ### 2026-10-21
 - [x] Latency over all sizes (`latency_ratio.pdf`; the difference version was dropped, the ratio shows the convergence
       better) and consistency of the iterations (`iteration_consistency.pdf`)

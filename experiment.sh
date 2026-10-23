@@ -48,6 +48,10 @@ write_job_info() {
     # everything Slurm applied (incl. what MUSICA's comfort mode set)
     echo; echo "slurm job:"
     scontrol show job "$SLURM_JOB_ID"
+    # of the job, after loading the modules; the benchmark processes additionally get the profiler settings and the
+    # library path (profiled.sh), see env-rank<N>.txt in the profiler outputs
+    echo; echo "environment:"
+    print_environment
 }
 
 run_experiment() {

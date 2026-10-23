@@ -29,6 +29,13 @@ runtime_library_path() {
     echo "$NCCL_HOME/lib:$CUDA_HOME/lib64:$MPI_HOME/lib${EBROOTGCCCORE:+:$EBROOTGCCCORE/lib64}"
 }
 
+# the environment, sorted, for the results (job-info.txt, env-rank<N>.txt): without exported shell functions and
+# without variables whose name looks like a credential (TOKEN, SECRET, PASSWORD, KEY)
+print_environment() {
+    env -0 | grep -zv '^BASH_FUNC_' | grep -zviE '^[^=]*(TOKEN|SECRET|PASSW|CREDENTIAL|KEY)[^=]*=' \
+        | sort -z | tr '\0' '\n'
+}
+
 # version of the NCCL in NCCL_HOME, e.g. 2.27.7
 nccl_version() {
     grep -E '^#define NCCL_(MAJOR|MINOR|PATCH) ' "$NCCL_HOME/include/nccl.h" | awk '{print $3}' | paste -sd.

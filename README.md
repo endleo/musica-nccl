@@ -114,9 +114,11 @@ rank).
 ```
 results/<experiment>/<array job id>/<task id>/
   job-info.txt                   experiment and its parameters, job, nodes, GPUs (visible per rank), NCCL version,
-                                 commits of the builds, loaded modules, `scontrol show job`
+                                 commits of the builds, loaded modules, `scontrol show job`, environment of the job
   <test>_<profiler>.out          benchmark output (nccl-tests table / ncclbench csv)
-  profiler-out.tar.gz            profiler outputs of all nodes (extracted by profiler_results.load_run)
+  profiler-out.tar.gz            profiler outputs of all nodes (extracted by profiler_results.load_run), and per
+                                 rank the environment the benchmark ran with (profiler settings, library path):
+                                 profiler-out/<profiler>/<test>/<host>/env-rank<N>.txt
 ```
 
 A short summary to send around (text written for run 1863257, figures from the analysis of the run):
