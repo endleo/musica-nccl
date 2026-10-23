@@ -14,26 +14,32 @@ Open items first, roughly by priority; done items at the bottom with the date.
   - possibly both: compare the module's NCCL with an own build of 2.27.7 without profilers first, to see if
     the module is tuned at all; check the module's environment (`module show`, `NCCL_*` variables it sets)
 - [ ] With NCCL >= 2.29.2: check that the broadcast workaround (`NCCL_ALLGATHERV_ENABLE=0`) is still needed
-- [ ] Check that the module sets `NCCL_HOME` (or `NCCL_ROOT`) and whether its include directory has profiler
-      headers (`module show <nccl>`, then `ls <prefix>/include`; NCCL's own install only ships `nccl.h`)
 
 ### Experiment
+- [ ] Baseline run without any profiler, to quantify the profiler overhead: the benchmark times already differ
+      between the profilers' runs (8 B Broadcast, ncclbench: about 21 µs in the CoMMA runs, 23-29 µs in the ncclsee
+      runs of 1863257)
 - [ ] **CoMMA has no times for ranks that only communicate within their node** (full run 1863257: only 60-69 % of
       the calls have a time, ncclsee ~100 %). CoMMA records every call, but its time (`child_dur`) comes from child
       events, by default only proxy ops (network transfers). Ranks without a network transfer in an op never get a
       child and the op is reclaimed after the timeout. Small sizes: AllReduce only ranks 0/4 (tree), Broadcast only
-      ranks 2/4 (ring) have times; from 128-256 KiB on all ranks (more channels). Not visible on Chameleon (1 GPU per
-      node, every rank on the network). Options:
+      ranks 2/4 (ring) have times; with more channels more ranks get times, 100 % from 256 KiB for AllReduce (both
+      benchmarks) and from 128 KiB (ncclbench) or 2 MiB (nccl-tests) for Broadcast. Not visible on Chameleon (1 GPU
+      per node, every rank on the network). Options:
   - `NCCL_PROFILER_TRACK_KERNEL_CH=true` (CoMMA option, default false): kernel channels as children too, so every
     rank gets a time, but `child_dur` then means something else than on Chameleon (kernel instead of proxy time)
-  - 1 rank per node (as on Chameleon; e.g. `--gres=gpu:1` per node), same semantics as on Chameleon
   - keep it, and only compare CoMMA on the ranks it has times for (the max over ranks in the violin plots is then
     over a subset of the ranks)
+- [ ] Check the rings/trees NCCL builds (which GPU crosses the nodes in which channel) with
+      `NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,GRAPH`, e.g. in one quick run; this would confirm the per-rank
+      explanations in the summary appendix (e.g. rank 2 as the network sender of the 8 B Broadcast), which are
+      inferred from the data
 - [ ] All three iterations of 1863257 ran on the same two nodes (n3010-021, n3015-015); for node-to-node variation
       (as on Chameleon, fresh servers per run) exclude previously used nodes or submit iterations separately
 - [ ] CoMMA: raise `NCCL_PROFILER_NCCLOP_TIMEOUT` (default 10s, e.g. `60s`); on Chameleon nccl-tests lost large
-      ops that were reclaimed without `child_dur` (see Chameleon TODO)
-- [ ] Optional: baseline run without any profiler, to quantify profiler overhead
+      ops that were reclaimed without `child_dur` (see Chameleon TODO). Not needed on MUSICA so far (1863257: CoMMA
+      has times for 100 % of the calls from 4 MiB on, nothing lost to the timeout), but could come up again with
+      larger messages or a busier network
 - [ ] nccl-tests: more warmups/iterations (`-w 5 -n 50`) for comparability with ncclbench
 - [ ] Switch `experiments/quick.sbatch` and `experiments/full.sbatch` from MUSICA's comfort mode to explicit
       options with `#ASC --vanilla`, so the batch files state their options without MUSICA-specific defaults;
@@ -47,14 +53,22 @@ Open items first, roughly by priority; done items at the bottom with the date.
       39 % (profiler) below 4 MiB (it 01 Broadcast 4-16 KiB higher, it 02 Broadcast up to 4 KiB lower, alternating
       sizes, it 03 AllReduce up to 2 MiB higher); CoMMA run within 5 % (benchmark) / 12.5 % (CoMMA, it 03 AllReduce
       small sizes). Same nodes in all iterations -> look at the per-iteration distributions
-- [ ] ncclsee, AllReduce 2 MiB: profiler and benchmark time about equal (ratio ~1, elsewhere ~0.8); NCCL uses ring
-      instead of tree at that size and *only* that size (CoMMA records)
+- [ ] ncclsee, AllReduce 2 MiB: profiler and benchmark time about equal (ratio 1.01; 0.80 at 1 MiB, 0.89 at 4 MiB);
+      NCCL uses ring instead of tree at that size and *only* that size (both profilers record it). CoMMA shows no
+      jump there (0.81, 0.85, 0.89), so it is specific to how ncclsee measures the ring case
 - [ ] Tests for the analysis (the Chameleon project has a pytest suite for `profiler_results.py`; this copy
       only differs in `_profiler_dirs`)
+- [ ] CoMMA's coverage differs between nccl-tests and ncclbench (AllReduce 8-128 KiB, Broadcast 64 KiB-1 MiB,
+      `recorded_by_size.pdf`), although NCCL chose the same algorithm, protocol and channels in both; unexplained
+      (call pattern? nccl-tests enqueues 20 calls back to back)
+- [ ] ncclsee: GROUP and KERNEL_CH events carry a wrong `rank` (0 in the file of rank 1; only COLL events have the
+      right one, which is the one the analysis uses) -> possibly report upstream
 
 ## Done
 
 ### 2026-10-23
+- [x] NCCL module: found via `EBROOTNCCL`; its include directory only has `nccl.h` (no profiler headers), so the own
+      NCCL checkout stays necessary for CoMMA's headers
 - [x] Environment logged: of the job in `job-info.txt`, per rank (with the profiler settings) as `env-rank<N>.txt`
       in the profiler outputs; names that look like credentials are left out
 
