@@ -20,6 +20,9 @@ build.sh              clones and builds everything into build/
 experiments/          one Slurm batch file per experiment, with its parameters (profilers, tests, sizes, ...)
   full.sbatch         the Chameleon experiment: CoMMA + ncclsee, 8 B - 1 GiB, 3 iterations
   quick.sbatch        setup check: ncclsee only, 8 B - 1 MiB, 1 iteration (< 10 min)
+  logging.sbatch      NCCL's debug log (incl. per-call TUNING) and topology/graph dumps: ncclbench + ncclsee, 1 iteration
+  tuning.sbatch       NCCL's choice vs. pinned NCCL_ALGO/NCCL_PROTO: ncclbench + ncclsee, variants interleaved in
+                      3 rounds in one job (results/tuning/<job>/<round>/<variant>/)
 experiment.sh         shared part of the experiments (run every test once per profiler, job info, packing)
 profiled.sh           wrapper started per rank: sets the profiler environment, then runs the benchmark
 fetch.sh              copies results/ and logs/ from the cluster into a local clone (rsync over ssh)

@@ -132,3 +132,27 @@ profiler_env() {
             echo "unknown profiler $profiler" >&2; return 1 ;;
     esac
 }
+
+# ---------------------------------------------------------------------------------------------
+# NCCL logging (experiments with LOG_NCCL=true, e.g. experiments/logging.sbatch)
+# ---------------------------------------------------------------------------------------------
+
+# NCCL's debug log and its topology/graph dumps: nccl_logging_env <output directory of this process> <rank>
+# Subsystems (NCCL 2.27, src/debug.cc; setting NCCL_DEBUG_SUBSYS replaces the default INIT,BOOTSTRAP,ENV):
+#   INIT    version, network, plugin loading (tuner, profiler), rings/trees, connection setup
+#   ENV     every NCCL_* variable NCCL reads that is set (also from /etc/nccl.conf, ~/.nccl.conf)
+#   GRAPH   topology search, channel layout
+#   TUNING  rank 0: latency/bandwidth table of the cost model at init, and one line per call with the chosen
+#           algorithm, protocol and channels (src/enqueue.cc). The per-call line is written while planning the
+#           launch, so it adds to the host time of every call (small sizes: a few us); it goes to a file (buffered,
+#           unlike stderr) to keep that low, but the times of such a run are not comparable to runs without it
+#   NET     network devices, GDR
+# Every rank writes its own log; the dumps are written by rank 0 only (NCCL_*_DUMP_FILE_RANK, default 0).
+nccl_logging_env() {
+    local out=$1 rank=$2
+    export NCCL_DEBUG=INFO
+    export NCCL_DEBUG_SUBSYS=INIT,ENV,GRAPH,TUNING,NET
+    export NCCL_DEBUG_FILE="$out/nccl-rank$rank.log"
+    export NCCL_TOPO_DUMP_FILE="$out/topo-rank$rank.xml"
+    export NCCL_GRAPH_DUMP_FILE="$out/graph-rank$rank.xml"
+}
