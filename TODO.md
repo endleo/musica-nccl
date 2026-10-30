@@ -97,30 +97,41 @@ topology/graph dumps (`nccl_logging_env` in `config.sh`); the logs are in the pr
 
 ## Tuning experiment (`tuning.sbatch`)
 
-ncclbench + ncclsee, 8 B - 1 GiB; variants (NCCL's choice = `default`, pinned `NCCL_ALGO`/`NCCL_PROTO`) in 3
-rounds in one job on the same nodes, order rotated per round; results in `results/tuning/<job>/<round>/<variant>/`.
+ncclbench + ncclsee, 8 B - 1 GiB plus 1.5 and 3 MiB; `default` (NCCL's choice) and every available
+algorithm/protocol combination pinned with `NCCL_ALGO` + `NCCL_PROTO` (AllReduce `tree_*`/`ring_*` x LL/LL128/Simple,
+Broadcast's protocol pinned in the `ring_*` variants), i.e. a measured version of NCCL's cost table; in 3 rounds in
+one job on the same nodes, order rotated per round; results in `results/tuning/<job>/<round>/<variant>/`.
+42 runs, estimated 15-20 min (logging run: about 15 s per benchmark; LL variants slower at large sizes).
 
-- [ ] Variants, from the logging run (`report/logging/summary.typ`, "Consequences for the tuning experiment"):
-  - Ring vs. Tree for AllReduce around 2 MiB (`allreduce_ring`, `allreduce_tree`, already in `tuning.sbatch`), with
-    sizes between the powers of two (1.5, 3 MiB: the model predicts Ring from about 1.1 MB to 4 MiB)
-  - the model's close calls (< 2 % apart) with pinned protocols: AllReduce 1 MiB (Tree vs. Ring LL128), 64-128 MiB
-    (LL128 vs. Simple); Broadcast 512 KiB-1 MiB (LL vs. LL128), 64-128 MiB (LL128 vs. Simple)
-  - `default` is NCCL's own choice (no `NCCL_ALGO`/`NCCL_PROTO` from environment or conf files)
+- [ ] First run (`sbatch experiments/tuning.sbatch`); check in ncclsee's `COLL` events that every pinned run used
+      what was pinned (algorithm, protocol) and note what NCCL changed with it (channels, warps)
 - [ ] Report `report/tuning/summary.typ` once there are results
-- [ ] First run; check in ncclsee's `COLL` events that every pinned run used what was pinned (algorithm, protocol)
-      and note what NCCL changed with it (channels, warps)
-- [ ] Correctness of pinned combinations: ncclbench does not check results; forcing a protocol NCCL disabled for
-      the hardware (LL128) can give wrong results -> check such variants once with nccl-tests (validation on)
-- [ ] Analysis: per size and operation, pinned vs. default, per round (drift between rounds) and over all rounds
-      (`analyze.py` picks the newest run of any experiment by default, and does not know the round/variant layout)
+- [ ] Analysis: per size and operation, each combination vs. default, per round (drift between rounds) and over all
+      rounds (`analyze.py` picks the newest run of any experiment by default, and does not know the round/variant
+      layout). Questions from the logging run: Ring vs. Tree for AllReduce around 2 MiB (the model predicts Ring
+      from about 1.1 MB to 4 MiB); the model's close calls (< 2 % apart): AllReduce 1 MiB (Tree vs. Ring LL128),
+      64-128 MiB (LL128 vs. Simple); Broadcast 512 KiB-1 MiB (LL vs. LL128), 64-128 MiB (LL128 vs. Simple)
 - [ ] Also with nccl-tests (20 calls queued without sync per measurement): does the difference between pinned and
       default change when launch/host overhead overlaps with the GPU work?
 - [ ] Also without ncclsee, for the profiler's overhead on the differences (needs a `none` case in `profiler_env`);
       keep ncclsee in the first runs to confirm what NCCL actually did
-- [ ] Broadcast runs in all variants, also in `allreduce_*` ones where only AllReduce is pinned (extra default
+- [ ] Broadcast runs in all variants, also in the `tree_*` ones where only AllReduce is pinned (extra default
       samples, but run time); per-variant test lists if run time matters
 
 ## Done
+
+### 2026-10-30
+- [x] Tuning variants from the logging run: the full grid of available combinations (`NCCL_ALGO` and `NCCL_PROTO`
+      together leave exactly one; per-operation prefixes only change that operation, `parseList` in NCCL 2.27's
+      `src/graph/tuning.cc`) instead of `allreduce_ring`/`allreduce_tree`; covers Ring vs. Tree around 2 MiB and
+      all close calls. Sizes 1.5 and 3 MiB added
+- [x] Correctness of pinned combinations: not a concern on MUSICA. LL128 is enabled by default there (TUNING table
+      of run 1889653), so pinning it does not override NCCL's hardware check; all pinned combinations are ones NCCL
+      may choose itself
+- [x] Dry run of `tuning.sbatch` (local, with stubs for `srun`/`module`/`scontrol`/`nvidia-smi` and ncclbench): 42
+      runs, rotation and result layout as intended, `NCCL_ALGO`/`NCCL_PROTO` (incl. `;`) reach every rank's
+      environment. Not covered: NCCL itself, srun's environment passing (shown by the logging run: `LOG_NCCL`
+      reached all ranks)
 
 ### 2026-10-29
 - [x] Logging run 1889653 evaluated (`report/logging/summary.typ`): all ranks wrote their logs, rank 0 the dumps; no
