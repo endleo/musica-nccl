@@ -28,7 +28,8 @@ Open items per experiment (and general ones first), roughly by priority; done it
 ### Experiment
 - [ ] Baseline run without any profiler, to quantify the profiler overhead: the benchmark times already differ
       between the profilers' runs (8 B Broadcast, ncclbench: about 21 µs in the CoMMA runs, 23-29 µs in the ncclsee
-      runs of 1863257)
+      runs of 1863257). Caution: Broadcast/LL up to 16 KiB is bimodal (clusters at about 20 and 28 µs at 8 B, tuning
+      run 1893400), so these medians may differ by the cluster they fall into rather than by profiler overhead
 - [ ] **CoMMA has no times for ranks that only communicate within their node** (full run 1863257: only 60-69 % of
       the calls have a time, ncclsee ~100 %). CoMMA records every call, but its time (`child_dur`) comes from child
       events, by default only proxy ops (network transfers). Ranks without a network transfer in an op never get a
@@ -50,12 +51,14 @@ Open items per experiment (and general ones first), roughly by priority; done it
 - [ ] Run 1863257, `iteration_consistency.pdf`: ncclsee run differs between iterations by up to 28 % (benchmark) /
       39 % (profiler) below 4 MiB (it 01 Broadcast 4-16 KiB higher, it 02 Broadcast up to 4 KiB lower, alternating
       sizes, it 03 AllReduce up to 2 MiB higher); CoMMA run within 5 % (benchmark) / 12.5 % (CoMMA, it 03 AllReduce
-      small sizes). Same nodes in all iterations -> look at the per-iteration distributions
+      small sizes). Same nodes in all iterations -> look at the per-iteration distributions. The Broadcast part
+      matches the bimodal Broadcast/LL times of the tuning run (rounds up to 23 % apart, `report/tuning/summary.typ`)
 - [ ] ncclsee, AllReduce 2 MiB: profiler and benchmark time about equal (ratio 1.01; 0.80 at 1 MiB, 0.89 at 4 MiB);
       NCCL uses ring instead of tree at that size and *only* that size (both profilers record it). CoMMA shows no
       jump there (0.81, 0.85, 0.89), so it is specific to how ncclsee measures the ring case
       -> why NCCL picks Ring there: cost model, confirmed in the logging experiment (Tree bandwidth correction
-      factor 0.6 up to 2 MiB, 0.8 from 4 MiB); whether Ring is actually faster: tuning experiment
+      factor 0.6 up to 2 MiB, 0.8 from 4 MiB); Ring is actually faster there (tuning run 1893400: 15 % at 2 MiB, also
+      at 1.5, 3 and 4 MiB)
 - [ ] Tests for the analysis (the Chameleon project has a pytest suite for `profiler_results.py`; this copy
       only differs in `_profiler_dirs`)
 - [ ] CoMMA's coverage differs between nccl-tests and ncclbench (AllReduce 8-128 KiB, Broadcast 64 KiB-1 MiB,
@@ -84,8 +87,6 @@ topology/graph dumps (`nccl_logging_env` in `config.sh`); the logs are in the pr
       the longer enqueue on ranks 0 and 2 (profiler summary, appendix)
 - [ ] Optional: the hidden `mlx5_1` (probably the inactive second port of the 25 Gb RoCE card `mlx5_0`); check with
       `ibv_devices` / `ibstat` / `rdma link` on a compute node
-- [ ] Measured vs. estimated: compare NCCL's model estimates per size and combination (from the TUNING table, as in
-      the logging report) with the ncclbench times of runs without logging (tuning experiment)
 - [ ] Later: pass-through tuner plugin (tuner API v4 for NCCL 2.27) that logs the cost table NCCL computed
       (`collCostTable` in `getCollInfo`, 7 algorithms x 3 protocols, -1 = not available) once per (operation, size,
       `numPipeOps`) and changes nothing: the estimates of the options NCCL did not choose, without recomputing
@@ -103,14 +104,19 @@ Broadcast's protocol pinned in the `ring_*` variants), i.e. a measured version o
 one job on the same nodes, order rotated per round; results in `results/tuning/<job>/<round>/<variant>/`.
 42 runs, estimated 15-20 min (logging run: about 15 s per benchmark; LL variants slower at large sizes).
 
-- [ ] First run (`sbatch experiments/tuning.sbatch`); check in ncclsee's `COLL` events that every pinned run used
-      what was pinned (algorithm, protocol) and note what NCCL changed with it (channels, warps)
-- [ ] Report `report/tuning/summary.typ` once there are results
-- [ ] Analysis: per size and operation, each combination vs. default, per round (drift between rounds) and over all
-      rounds (`analyze.py` picks the newest run of any experiment by default, and does not know the round/variant
-      layout). Questions from the logging run: Ring vs. Tree for AllReduce around 2 MiB (the model predicts Ring
-      from about 1.1 MB to 4 MiB); the model's close calls (< 2 % apart): AllReduce 1 MiB (Tree vs. Ring LL128),
-      64-128 MiB (LL128 vs. Simple); Broadcast 512 KiB-1 MiB (LL vs. LL128), 64-128 MiB (LL128 vs. Simple)
+Run 1893400 evaluated in `report/tuning/summary.typ`; done items below (2026-10-31).
+
+- [ ] Bimodal Broadcast/LL times up to 16 KiB (8 B: clusters at about 20 and 28 µs, the median jumps between them,
+      rounds up to 23 % apart; LL128/Simple are unimodal): where the clusters come from (which rank is last,
+      ncclsee's per-rank kernel times of the slow vs. fast calls), and whether they also occur without a profiler
+- [ ] AllReduce Ring/LL, round 03 10-21 % slower (64 B - 1 MiB) and Tree/LL128, round 01 5-7 % slower
+      (128 KiB - 4 MiB) than the other rounds: single slow runs, or a pattern (needs more rounds/runs)
+- [ ] Second tuning run on other nodes: are the wins over NCCL's choice (AllReduce 4 MiB Ring/LL128, 32-64 MiB
+      Tree/Simple; Broadcast 256-512 KiB LL128, 128 MiB LL128; 4-16 %) a property of the system or of n3010-020/021?
+- [ ] The model's estimates are far from the measured times for combinations NCCL does not pick (Tree/LL above
+      128 KiB up to 3.5x, Broadcast LL128/Simple latencies 1.7x/2.7x at 8 B, Broadcast 64 KiB - 32 MiB 0.6-0.85x):
+      the TUNING table is printed with one decimal and was taken from the logging run on other nodes; check with a
+      logging run on the tuning nodes, or the tuner plugin below (exact cost table)
 - [ ] Also with nccl-tests (20 calls queued without sync per measurement): does the difference between pinned and
       default change when launch/host overhead overlaps with the GPU work?
 - [ ] Also without ncclsee, for the profiler's overhead on the differences (needs a `none` case in `profiler_env`);
@@ -119,6 +125,22 @@ one job on the same nodes, order rotated per round; results in `results/tuning/<
       samples, but run time); per-variant test lists if run time matters
 
 ## Done
+
+### 2026-10-31
+- [x] Tuning run 1893400 (3 rounds x 7 variants, 42 runs, n3010-020/021) evaluated (`analysis/tuning.py`, called by
+      `analyze.py` for runs with variants; `report/tuning/summary.typ`): all runs complete, ncclsee has all
+      440 calls per round/variant/operation/size, every pinned call used the pinned algorithm/protocol (channels and
+      warps follow the pinned combination's thresholds); NCCL's choice identical to the logging run and to the cost
+      model (Ring at 1.5-3 MiB as predicted)
+- [x] Measured vs. estimated (cost model with the logging run's TUNING table): estimates are mostly outside the
+      measured distribution (179 of 270 below or above every call); NCCL's choice 0.76-0.93 of the measured median
+      up to 64 KiB (host overhead not in the model), 0.87-1.06 at 128 KiB - 64 MiB, 1.21-1.30 from 128 MiB (AllReduce)
+- [x] Pinned vs. default with a noise floor from two runs of the same configuration: NCCL's choice is the fastest
+      (within noise) at 27 of 30 sizes per operation. Ring vs. Tree around 2 MiB: Ring faster at 1.5-4 MiB (NCCL:
+      1.5-3 MiB). Close calls of the logging run: NCCL right at AllReduce 1 MiB, 128 MiB, Broadcast 64 MiB; wrong at
+      AllReduce 64 MiB (Simple 14 % faster) and Broadcast 512 KiB (LL128 16 % faster)
+- [x] Consistency of the rounds (`round_consistency.pdf`): within about 2 % from 1 MiB, except Broadcast/LL at small
+      sizes (bimodal) and two single slow rounds (open items above)
 
 ### 2026-10-30
 - [x] Tuning variants from the logging run: the full grid of available combinations (`NCCL_ALGO` and `NCCL_PROTO`

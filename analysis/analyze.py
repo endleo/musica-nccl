@@ -7,6 +7,8 @@ tests and ncclbench settings are taken from the run itself (output file names, j
 folder: violins.pdf per iteration; recorded_operations.pdf, recorded_by_size.pdf, latency_ratio.pdf,
 iteration_consistency.pdf
 and reported_times.txt per run.
+
+Runs with variants (tuning experiment: <run>/<round>/<variant>/) are evaluated by tuning.py instead.
 """
 
 import argparse
@@ -20,6 +22,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 import profiler_results as pr
+import tuning
 
 RESULTS = Path(__file__).resolve().parent.parent / "results"
 
@@ -139,6 +142,9 @@ def main():
     args = parser.parse_args()
     # job ids increase, so the newest run is the one with the highest id
     run = args.run or max((p for p in RESULTS.glob("*/*") if p.name.isdigit()), key=lambda p: int(p.name))
+    if tuning.is_tuning_run(run):
+        tuning.analyze(run)
+        return
 
     iteration_dirs = []
     for d in sorted(p for p in run.iterdir() if p.is_dir() and p.name.isdigit()):

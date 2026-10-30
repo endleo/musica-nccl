@@ -30,8 +30,11 @@ TODO.md               open tasks and progress
 report/               summaries (Typst), one folder per experiment
   profilers/summary.typ  profiler experiment: summary of a run with the figures
   logging/summary.typ    logging experiment: NCCL's environment, layout, choices and cost model
+  tuning/summary.typ     tuning experiment: pinned vs. NCCL's choice, NCCL's estimates vs. measured times
 analysis/
-  analyze.py          plots and tables of a run (the evaluation cells of the Chameleon notebook)
+  analyze.py          plots and tables of a run (the evaluation cells of the Chameleon notebook); runs with
+                      variants (tuning) are handed to tuning.py
+  tuning.py           evaluation of a tuning run (choices per variant, cost model, rounds, pinned vs. default)
   profiler_results.py parsing of benchmark and profiler outputs (copied from the Chameleon project)
 files/comma/Cargo.lock  pinned crate versions for the CoMMA build (its repo has none)
 results/<experiment>/<job>/<NN>/   output of each array task
@@ -66,6 +69,7 @@ Locally:
 ```sh
 ./fetch.sh                  # default remote musica:musica-nccl (ssh config entry "musica")
 uv run analysis/analyze.py  # newest run; or: uv run analysis/analyze.py results/<experiment>/<job>
+typst compile --root . report/<experiment>/summary.typ    # summary with the figures of the run (see below)
 ```
 
 ## Experiments
@@ -129,7 +133,9 @@ results/<experiment>/<array job id>/<task id>/
 Short summaries to send around, one per experiment, compiled from the repository root:
 `typst compile --root . report/profilers/summary.typ` (text written for run 1863257, figures from the analysis of the
 run; `--input run=results/<experiment>/<job>` for another run) writes `report/profilers/summary.pdf`;
-`report/logging/summary.typ` (run 1889653) has no figures, its numbers are taken from the logs.
+`report/logging/summary.typ` (run 1889653) has no figures, its numbers are taken from the logs;
+`report/tuning/summary.typ` (run 1893400) reads its figures from `results/tuning/<job>/`, so run `analyze.py` on
+the tuning run first (it also needs the logging run 1889653 in `results/`, for NCCL's cost table).
 
 `analyze.py` writes `violins.pdf` per iteration and per run:
 
@@ -138,3 +144,14 @@ run; `--input run=results/<experiment>/<job>` for another run) writes `report/pr
 - `iteration_consistency.pdf`: per size, how far each iteration's median is from the median over all iterations,
   against the spread within an iteration
 - `reported_times.txt`: mean times per size, as the tables in the Chameleon notebook
+
+For a tuning run (`results/tuning/<job>/<round>/<variant>/`), `analyze.py` calls `tuning.py`, which extracts the
+profiler outputs of every variant and writes into the run folder (ncclbench times, all rounds together unless stated):
+
+- `choices.txt`: algorithm, protocol, channels and warps `ncclsee` recorded per variant and size, checked against
+  what was pinned; NCCL's choice compared with the logging run 1889653 and with the cost model
+- `model_vs_measured.txt`, `model_vs_measured.pdf`, `model_violins.pdf`: NCCL's estimate per combination (cost
+  model with the TUNING table of the logging run) against the measured distribution
+- `round_consistency.pdf`: per variant, how far each round's median is from the median over the rounds
+- `pinned_vs_default.pdf`, `best_vs_default.txt`: every pinned combination against NCCL's choice, with the noise
+  floor from two runs of the same configuration
