@@ -27,7 +27,9 @@ experiment.sh         shared part of the experiments (run every test once per pr
 profiled.sh           wrapper started per rank: sets the profiler environment, then runs the benchmark
 fetch.sh              copies results/ and logs/ from the cluster into a local clone (rsync over ssh)
 TODO.md               open tasks and progress
-report/summary.typ    short summary of a run with the figures (Typst)
+report/               summaries (Typst), one folder per experiment
+  profilers/summary.typ  profiler experiment: summary of a run with the figures
+  logging/summary.typ    logging experiment: NCCL's environment, layout, choices and cost model
 analysis/
   analyze.py          plots and tables of a run (the evaluation cells of the Chameleon notebook)
   profiler_results.py parsing of benchmark and profiler outputs (copied from the Chameleon project)
@@ -124,9 +126,10 @@ results/<experiment>/<array job id>/<task id>/
                                  profiler-out/<profiler>/<test>/<host>/env-rank<N>.txt
 ```
 
-A short summary to send around (text written for run 1863257, figures from the analysis of the run):
-`typst compile --root . report/summary.typ` (or `--input run=results/<experiment>/<job>` for another run) writes
-`report/summary.pdf`.
+Short summaries to send around, one per experiment, compiled from the repository root:
+`typst compile --root . report/profilers/summary.typ` (text written for run 1863257, figures from the analysis of the
+run; `--input run=results/<experiment>/<job>` for another run) writes `report/profilers/summary.pdf`;
+`report/logging/summary.typ` (run 1889653) has no figures, its numbers are taken from the logs.
 
 `analyze.py` writes `violins.pdf` per iteration and per run:
 

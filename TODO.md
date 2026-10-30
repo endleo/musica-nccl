@@ -54,12 +54,15 @@ Open items per experiment (and general ones first), roughly by priority; done it
 - [ ] ncclsee, AllReduce 2 MiB: profiler and benchmark time about equal (ratio 1.01; 0.80 at 1 MiB, 0.89 at 4 MiB);
       NCCL uses ring instead of tree at that size and *only* that size (both profilers record it). CoMMA shows no
       jump there (0.81, 0.85, 0.89), so it is specific to how ncclsee measures the ring case
-      -> tuning experiment (pinned Ring/Tree at 2 MiB); likely cause in NCCL's model see the logging experiment
+      -> why NCCL picks Ring there: cost model, confirmed in the logging experiment (Tree bandwidth correction
+      factor 0.6 up to 2 MiB, 0.8 from 4 MiB); whether Ring is actually faster: tuning experiment
 - [ ] Tests for the analysis (the Chameleon project has a pytest suite for `profiler_results.py`; this copy
       only differs in `_profiler_dirs`)
 - [ ] CoMMA's coverage differs between nccl-tests and ncclbench (AllReduce 8-128 KiB, Broadcast 64 KiB-1 MiB,
       `recorded_by_size.pdf`), although NCCL chose the same algorithm, protocol and channels in both; unexplained
       (call pattern? nccl-tests enqueues 20 calls back to back)
+      Also: the summary's guess for ncclbench's 25 % at 32-64 KiB (all trees cross the nodes at the same GPUs) is
+      ruled out by the logging run: the 4 tree channels cross at 4 different GPU pairs
 - [ ] ncclsee: GROUP and KERNEL_CH events carry a wrong `rank` (0 in the file of rank 1; only COLL events have the
       right one, which is the one the analysis uses) -> possibly report upstream
 - [ ] Compare runs 1863257 and 1874191 (which ran on different nodes) to see how consistent latencies are (ideally
@@ -70,39 +73,40 @@ Open items per experiment (and general ones first), roughly by priority; done it
 
 ncclbench + ncclsee, 8 B - 1 GiB, one iteration, `NCCL_DEBUG=INFO` with `INIT,ENV,GRAPH,TUNING,NET` and the
 topology/graph dumps (`nccl_logging_env` in `config.sh`); the logs are in the profiler outputs
-(`nccl-rank<N>.log`, `topo-rank0.xml`, `graph-rank0.xml` next to `env-rank<N>.txt`).
+(`nccl-rank<N>.log`, `topo-rank0.xml`, `graph-rank0.xml` next to `env-rank<N>.txt`). Run 1889653 evaluated in
+`report/logging/summary.typ`; done items below (2026-10-29).
 
-- [ ] First run; check that every rank wrote its log and rank 0 the dumps
-- [ ] Settings from outside the repo: `NCCL_* set by environment` lines (ENV) against `env-rank<N>.txt`; anything
-      not in the environment comes from `/etc/nccl.conf` / `~/.nccl.conf` or the module. Especially
-      `NCCL_ALGO`/`NCCL_PROTO` (would change the "default" variant of the tuning experiment), also
-      `module show NCCL/2.27.7-GCCcore-14.3.0-CUDA-12.9.1` in `job-info.txt`
-- [ ] Tuner: `TUNER/Plugin` lines (INIT) -> internal tuner or an external one (2.27 also looks for
-      `libnccl-tuner.so` and a tuner in the net plugin without `NCCL_TUNER_PLUGIN`)
-- [ ] Network: `Using network IB`/`Socket`, NICs, GDR (`NET/IB`, `Connected all rings ... GDR`)
-- [ ] Per-call selection (TUNING, rank 0: `<op>: <bytes> Bytes -> Algo .. proto .. channel{Lo..Hi}`) against
-      ncclsee's `COLL` events; should match the tables in `report/summary.typ`
-- [ ] Model table (TUNING at init, rank 0: latency/bandwidth per operation x algorithm x protocol): compute NCCL's
-      estimate per size and option offline (`ncclTopoGetAlgoTime`, `src/graph/tuning.cc`: `lat + nBytes/bw`, Tree
-      AllReduce bandwidth times `treeCorrectionFactor[proto][log2(nBytes/64)]`, ring plateau factor for
-      Simple). Hypothesis for the AllReduce 2 MiB Ring choice: the LL128 factor is 0.6 at 1-2 MiB and 0.8 at 4 MiB
-- [ ] Rings/trees (GRAPH, INIT, graph dump): which GPU crosses the nodes in which channel; confirms or corrects
-      the per-rank explanations in the summary appendix (e.g. rank 2 as the network sender of the 8 B Broadcast)
-- [ ] Choose the variants of the tuning experiment from this
+- [ ] `module show NCCL/2.27.7-GCCcore-14.3.0-CUDA-12.9.1` in `job-info.txt` (the log shows that no `NCCL_*`
+      setting reached NCCL from outside, but not what else the module sets)
+- [ ] PXN and CoMMA: rank 2's network send of the 8 B Broadcast is done by the proxy thread of rank 0's process
+      (`NET/IB/4(0)`), yet CoMMA records the transfer for rank 2. Check how proxy events of a PXN send are attributed
+      (profiler API v4: the proxy op descriptor carries the originating pid/rank?), and whether this is related to
+      the longer enqueue on ranks 0 and 2 (profiler summary, appendix)
+- [ ] Optional: the hidden `mlx5_1` (probably the inactive second port of the 25 Gb RoCE card `mlx5_0`); check with
+      `ibv_devices` / `ibstat` / `rdma link` on a compute node
+- [ ] Measured vs. estimated: compare NCCL's model estimates per size and combination (from the TUNING table, as in
+      the logging report) with the ncclbench times of runs without logging (tuning experiment)
 - [ ] Later: pass-through tuner plugin (tuner API v4 for NCCL 2.27) that logs the cost table NCCL computed
       (`collCostTable` in `getCollInfo`, 7 algorithms x 3 protocols, -1 = not available) once per (operation, size,
       `numPipeOps`) and changes nothing: the estimates of the options NCCL did not choose, without recomputing
       the model. Leave `*nChannels` at 0 (in 2.27 the plugin's value replaces NCCL's; the bundled example sets 1
       for every call without a matching config line); log through the logger NCCL passes to `init`; with dedup per
       key the per-call cost is a lookup. In 2.27 the plugin runs after NCCL disabled what `NCCL_ALGO`/`NCCL_PROTO`
-      exclude, so in pinned runs it only sees the allowed options
+      exclude, so in pinned runs it only sees the allowed options. Less urgent now: the offline calculation from the
+      TUNING table already reproduces every choice
 
 ## Tuning experiment (`tuning.sbatch`)
 
 ncclbench + ncclsee, 8 B - 1 GiB; variants (NCCL's choice = `default`, pinned `NCCL_ALGO`/`NCCL_PROTO`) in 3
 rounds in one job on the same nodes, order rotated per round; results in `results/tuning/<job>/<round>/<variant>/`.
 
-- [ ] Variants: placeholders (`allreduce_ring`, `allreduce_tree`) until the logging run is evaluated
+- [ ] Variants, from the logging run (`report/logging/summary.typ`, "Consequences for the tuning experiment"):
+  - Ring vs. Tree for AllReduce around 2 MiB (`allreduce_ring`, `allreduce_tree`, already in `tuning.sbatch`), with
+    sizes between the powers of two (1.5, 3 MiB: the model predicts Ring from about 1.1 MB to 4 MiB)
+  - the model's close calls (< 2 % apart) with pinned protocols: AllReduce 1 MiB (Tree vs. Ring LL128), 64-128 MiB
+    (LL128 vs. Simple); Broadcast 512 KiB-1 MiB (LL vs. LL128), 64-128 MiB (LL128 vs. Simple)
+  - `default` is NCCL's own choice (no `NCCL_ALGO`/`NCCL_PROTO` from environment or conf files)
+- [ ] Report `report/tuning/summary.typ` once there are results
 - [ ] First run; check in ncclsee's `COLL` events that every pinned run used what was pinned (algorithm, protocol)
       and note what NCCL changed with it (channels, warps)
 - [ ] Correctness of pinned combinations: ncclbench does not check results; forcing a protocol NCCL disabled for
@@ -119,6 +123,14 @@ rounds in one job on the same nodes, order rotated per round; results in `result
 ## Done
 
 ### 2026-10-29
+- [x] Logging run 1889653 evaluated (`report/logging/summary.typ`): all ranks wrote their logs, rank 0 the dumps; no
+      `NCCL_*` setting from outside the repo (environment, conf files), internal tuner, IB with GDR on all
+      connections (4 x 200 Gb/s, one NIC per GPU; the 25 Gb/s RoCE card is unused); NCCL's per-call log agrees with
+      ncclsee on every call and with the tables of the profiler summary; rings/trees per channel confirm the
+      per-rank explanations of the profiler summary (correction: PXN, rank 2's send goes through rank 0's proxy);
+      NCCL's cost model (TUNING table) reproduces every choice, incl. Ring at 2 MiB
+- [x] Report split per experiment: `report/profilers/summary.typ` (with a note on the logging results),
+      `report/logging/summary.typ`
 - [x] Logging and tuning experiments (`experiments/logging.sbatch`, `experiments/tuning.sbatch`; variants and
       rounds in `experiment.sh`, NCCL logging in `config.sh`/`profiled.sh`), not run yet
 - [x] The three iterations of the full experiment tend to get the same nodes assigned every time, but this is not

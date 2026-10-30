@@ -1,7 +1,7 @@
 // Short summary of a run, to send around. Compile from the repository root (figures are read from results/):
-//   typst compile --root . report/summary.typ
-//   typst compile --root . --input run=results/full/<job> report/summary.typ     other run
-//   typst watch --root . report/summary.typ                                      recompile on changes
+//   typst compile --root . report/profilers/summary.typ
+//   typst compile --root . --input run=results/full/<job> report/profilers/summary.typ     other run
+//   typst watch --root . report/profilers/summary.typ                                      recompile on changes
 // The figures come from analysis/analyze.py; the text is written for run 1863257.
 
 #let run = sys.inputs.at("run", default: "results/full/1863257")
@@ -103,6 +103,31 @@ All iterations ran on the same two nodes.
     median, averaged over the 3 iterations and centered on 0. Lines inside the band: the iterations differ less than
     the calls within one iteration.],
 ) <consistency>
+
+== Note: logging experiment (run 1889653)
+
+Added later; the rest of this summary is unchanged. The logging experiment (`report/logging/summary.typ`) ran
+ncclbench with `ncclsee` and NCCL's own debug log, on other nodes (n3011-021, n3012-007). It confirms or extends the
+following:
+
+- *Algorithms, protocols, channels* (@algorithms): NCCL's per-call log shows the same choice as the two tables, for
+  every call of a size. No external tuner plugin was loaded, and no `NCCL_*` variable was set from outside the
+  repository (environment, `/etc/nccl.conf`, `~/.nccl.conf`).
+- *AllReduce at 2 MiB*: "not visible from the data" no longer holds. NCCL's cost model (latency/bandwidth table in
+  the log, `src/graph/tuning.cc`) estimates Ring/LL128 at 87.5 µs and Tree/LL128 at 94.5 µs there. Tree's bandwidth
+  is scaled by a fixed correction factor per size, 0.6 from 64 KiB to 2 MiB and 0.8 from 4 MiB, which makes Ring
+  cheaper between about 1.1 MB and 4 MiB. The model reproduces every other choice as well.
+- *Rings and trees*: the log confirms the explanations inferred from the data. Small AllReduce messages (Tree,
+  channel 0) cross between the nodes only at ranks 0 #sym.arrow.l.r 4. The 8 B Broadcast ring (channel 0: 0 3 1 2 4 7 5 6) crosses at
+  rank 2 #sym.arrow 4. One correction: rank 2’s network send goes through the NIC next to GPU 0, forwarded over
+  NVLink, and is carried out by the proxy thread of rank 0’s process (PXN, `NET/IB/4(0)` in the log), not by rank 2’s
+  own proxy as written in @bcast-example. How CoMMA still records this transfer for rank 2 has not been checked; nor
+  whether it is related to the longer enqueue on ranks 0 and 2.
+- *CoMMA's 25 % for AllReduce in ncclbench at 32 -- 64 KiB* (@algorithms): the guess that all trees cross the nodes at
+  the same GPUs is wrong. The four tree channels cross at four different GPU pairs (0 #sym.arrow.l.r 4,
+  3 #sym.arrow.l.r 7, 1 #sym.arrow.l.r 5, 2 #sym.arrow.l.r 6), so the cause is still open.
+- *Threads*: `ncclsee` also records the number of warps per call (Tree: always 20; Broadcast/LL: 3 -- 16, growing
+  with the size). These follow from the same thresholds in NCCL's model.
 
 == Open questions
 
@@ -263,8 +288,8 @@ rank 2 sends it over the network, rank 4 receives it and passes it on to the oth
 of all ranks start at about the same time (ncclbench synchronizes the ranks with a barrier before every call):
 
 - ranks 0 -- 3 (node 1, with the root) get the data over NVLink and are done after 1.5 -- 3.5 µs of kernel time;
-  rank 2's kernel only hands the data to its proxy thread, the network send itself runs on the CPU
-- ranks 4 -- 7 (node 2) wait in their kernels until the data has crossed the network (rank 2's proxy sends, rank 4's
+  rank 2’s kernel only hands the data to its proxy thread, the network send itself runs on the CPU
+- ranks 4 -- 7 (node 2) wait in their kernels until the data has crossed the network (rank 2’s proxy sends, rank 4’s
   proxy receives), about 19 -- 20 µs, then pass it on over NVLink
 - `ncclsee` measures every rank's kernel; its maximum over the ranks (about 21 µs per call) is dominated by the waiting
   on node 2, as is ncclbench's time (about 21 -- 29 µs)
