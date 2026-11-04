@@ -722,7 +722,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("run", nargs="?", type=Path, help="run folder (default: newest in results/tuning/)")
     args = parser.parse_args()
-    run = args.run or max((p for p in (RESULTS / "tuning").glob("*") if p.name.isdigit()), key=lambda p: int(p.name))
+    run = args.run or pr.newest_run((RESULTS / "tuning").glob("*"))
     analyze(run)
 
 

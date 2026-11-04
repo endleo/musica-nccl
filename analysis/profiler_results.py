@@ -34,6 +34,7 @@ import json
 import re
 import tarfile
 import warnings
+from datetime import datetime
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -218,6 +219,27 @@ def load_ncclbench(path):
 # ---------------------------------------------------------------------------------------------
 # aggregation
 # ---------------------------------------------------------------------------------------------
+
+def run_date(run):
+    """
+    start of a run (`date:` in its first job-info.txt: <run>/job-info.txt with variants, else <run>/<NN>/job-info.txt),
+    None if it has none. Run ids are Slurm job ids (MUSICA) or <machine>-<date> (run-local.sh), so they do not sort
+    by time across machines
+    """
+    for info in [*sorted(Path(run).glob("job-info.txt")), *sorted(Path(run).glob("*/job-info.txt"))]:
+        m = re.search(r"^date: (\S+)", info.read_text(), re.M)
+        if m:
+            return datetime.fromisoformat(m.group(1))
+    return None
+
+
+def newest_run(runs):
+    """the run folder with the latest start (run_date) among `runs`"""
+    dated = [(d, r) for r in runs if r.is_dir() and (d := run_date(r)) is not None]
+    if not dated:
+        raise SystemExit("no runs with a job-info.txt")
+    return max(dated, key=lambda dr: dr[0])[1]
+
 
 def extract_profiler_outputs(run_dir):
     """extracts <run>/profiler-out.tar.gz (once) and returns the extraction directory"""

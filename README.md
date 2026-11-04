@@ -9,6 +9,10 @@ Open tasks and progress: [TODO.md](TODO.md).
 CUDA, NCCL (2.27.7) and MPI come from the cluster's modules; the benchmarks and profiler plugins are built from
 source (same versions as on Chameleon). The experiments are Slurm array jobs; the analysis runs locally.
 
+The same experiments also run on three DGX Sparks (dgx1-3, aarch64, one GB10 each, no Slurm), see
+[DGX Spark cluster](#dgx-spark-cluster). `MACHINE` in `config.sh` (detected from the CPU architecture) selects the
+settings.
+
 **No NCCL Inspector:** NCCL 2.27 loads profiler plugins up to API v4; the Inspector only implements v5 (and only
 exists since NCCL 2.29.7). CoMMA and ncclsee use v4 and work.
 
@@ -23,6 +27,7 @@ experiments/          one Slurm batch file per experiment, with its parameters (
   logging.sbatch      NCCL's debug log (incl. per-call TUNING) and topology/graph dumps: ncclbench + ncclsee, 1 iteration
   tuning.sbatch       NCCL's choice vs. pinned NCCL_ALGO/NCCL_PROTO: ncclbench + ncclsee, variants interleaved in
                       3 rounds in one job (results/tuning/<job>/<round>/<variant>/)
+run-local.sh          runs a batch file without Slurm (DGX Sparks), the iterations one after the other
 experiment.sh         shared part of the experiments (run every test once per profiler, job info, packing)
 profiled.sh           wrapper started per rank: sets the profiler environment, then runs the benchmark
 fetch.sh              copies results/ and logs/ from the cluster into a local clone (rsync over ssh)
@@ -37,8 +42,8 @@ analysis/
   tuning.py           evaluation of a tuning run (choices per variant, cost model, rounds, pinned vs. default)
   profiler_results.py parsing of benchmark and profiler outputs (copied from the Chameleon project)
 files/comma/Cargo.lock  pinned crate versions for the CoMMA build (its repo has none)
-results/<experiment>/<job>/<NN>/   output of each array task
-logs/                 Slurm job output (not in git)
+results/<experiment>/<job>/<NN>/   output of each array task (<job>: Slurm job id, or <machine>-<date> without Slurm)
+logs/                 Slurm job output, run-local.sh output (not in git)
 ```
 
 ## Before the first run
@@ -71,6 +76,41 @@ Locally:
 uv run analysis/analyze.py  # newest run; or: uv run analysis/analyze.py results/<experiment>/<job>
 typst compile --root . report/<experiment>/summary.typ    # summary with the figures of the run (see below)
 ```
+
+## DGX Spark cluster
+
+Three DGX Sparks (dgx1, dgx2, dgx3; Ubuntu 24.04, aarch64, one GB10 = sm_121 each), started from dgx1. Differences
+to MUSICA, all in `config.sh` (`MACHINE=spark`) unless stated:
+
+- no modules: OpenMPI 5.0.10 from the shared spack (`spack load`, `SPACK_ROOT=/opt/dgx-shared/spack/spack_git`),
+  CUDA 13.0 from `/usr/local/cuda`; NCCL is built by `build.sh` from the checkout, pinned to v2.32.3 (as on
+  Chameleon; not meant to be comparable with MUSICA's 2.27.7), into `build/nccl/build`. With 2.32 `build.sh` also
+  builds the Inspector, the experiments do not use it yet
+- no CoMMA for now: `build.sh` skips it (rust, libclang, protobuf), and the experiments leave out every profiler
+  whose plugin is missing (warning in the output), so `full.sbatch` runs ncclsee only
+- no Slurm: `./run-local.sh experiments/<experiment>.sbatch [<iterations>]` instead of `sbatch`, on dgx1 (in tmux:
+  `full` takes about an hour). The `#SBATCH` lines are only comments then; the iterations default to the batch file's
+  `--array` (`full`: 3) and run one after the other. Run ids are `spark-<date>-<time>`, e.g.
+  `results/full/spark-20261104-153000/01/`, so they cannot clash with MUSICA's job ids in a `results/` fetched from
+  both; `analyze.py` and `tuning.py` pick the newest run by the date in `job-info.txt`
+- `LAUNCHER`: `mpirun` with one rank per node (`--prefix`, so the other nodes find OpenMPI's daemons). mpirun does
+  not pass the environment on, so `experiment.sh` sets the variant's environment and `LOG_NCCL` per rank behind the
+  launcher, and `-x` passes the library paths; `profiled.sh` sets the rest as before
+- network: the nodes are connected in a ring by direct links (two point-to-point /30 subnets per pair of nodes, no
+  switch, 4 RoCE HCAs per node), so a node only reaches its two neighbors' addresses on them. MPI and NCCL's
+  bootstrap use the university network (`enP7s7`), which connects all nodes; NCCL's data goes over the HCAs
+- the home directory is NFS (exported by dgx1), so `build/` and `results/` are the same on all nodes
+
+Before the first run on dgx1: passwordless ssh from dgx1 to dgx2 and dgx3 must work without a prompt, including
+their host keys (`ssh dgx2 true`, `ssh dgx3 true`), since mpirun starts its daemons there over ssh.
+
+```sh
+git clone <this repo> musica-nccl && cd musica-nccl   # on dgx1, in the home directory
+./build.sh
+./run-local.sh experiments/quick.sbatch
+```
+
+Locally: `./fetch.sh dgx1:musica-nccl`.
 
 ## Experiments
 

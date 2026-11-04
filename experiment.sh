@@ -1,5 +1,6 @@
 # Shared part of the experiments in experiments/*.sbatch (sourced, not executed). An experiment sets
-#   EXPERIMENT        name, results go to results/<EXPERIMENT>/<array job id>/<array task id>/
+#   EXPERIMENT        name, results go to results/<EXPERIMENT>/<run id>/<iteration>/; run id and iteration: the array
+#                     job id and task id (Slurm), or RUN_ID and ITERATION (set by run-local.sh, without Slurm)
 #   PROFILERS         e.g. (comma ncclsee)
 #   NCCL_TESTS        nccl-tests binaries <test>_perf, e.g. (all_reduce broadcast), or () for none; NCCL_TESTS_ARGS
 #   NCCLBENCH_TESTS   associative array <test name> -> ncclbench operation; NCCLBENCH_ARGS (without --operation)
@@ -7,7 +8,8 @@
 #   LOG_NCCL          true: NCCL debug log and topology/graph dumps per rank (nccl_logging_env in config.sh)
 #   VARIANTS          names of variants, e.g. (default ring); every variant runs all tests, in ROUNDS rounds inside
 #                     the job (the order rotated by one per round, so no variant always runs first). Results then go
-#                     to results/<EXPERIMENT>/<job id>/<round>/<variant>/, the job info to results/<EXPERIMENT>/<job id>/
+#                     to results/<EXPERIMENT>/<run id>/<round>/<variant>/, the job info to
+#                     results/<EXPERIMENT>/<run id>/
 #   VARIANT_ENV       associative array <variant> -> environment of its runs, e.g. ([ring]="NCCL_ALGO=allreduce:ring");
 #                     a variant without an entry runs with the job's environment
 #   ROUNDS            number of rounds (default 1)
@@ -24,21 +26,30 @@ powers_of_two() {
 }
 
 # run <profiler> <test> <benchmark command...>; output in $OUT/<test>_<profiler>.out, with the environment of the
-# current variant ($variant_env, word-split into assignments for env)
+# current variant ($variant_env, word-split into assignments for env). Set per rank, behind the launcher: mpirun
+# (Sparks) does not pass the environment on to the other nodes
 run() {
     local profiler=$1 test=$2
     shift 2
     echo "[$(date +%T)] $test ($profiler${variant:+, $variant})"
-    env $variant_env $LAUNCHER ./profiled.sh "$profiler" "$OUT/profiler-out/$profiler/$test" "$@" \
-        > "$OUT/${test}_$profiler.out" || { echo "FAILED: $test ($profiler${variant:+, $variant})"; failed=1; }
+    $LAUNCHER env LOG_NCCL="$LOG_NCCL" $variant_env \
+        ./profiled.sh "$profiler" "$OUT/profiler-out/$profiler/$test" "$@" > "$OUT/${test}_$profiler.out" \
+        || { echo "FAILED: $test ($profiler${variant:+, $variant})"; failed=1; }
 }
 
 write_job_info() {
     echo "experiment: $EXPERIMENT"
-    echo "job: $SLURM_JOB_ID (array job ${SLURM_ARRAY_JOB_ID:--}, task ${SLURM_ARRAY_TASK_ID:--})"
-    echo "date: $(date -Is)"
-    echo "nodes: $(scontrol show hostnames "$SLURM_JOB_NODELIST" | paste -sd' ')"
-    echo "tasks: $SLURM_NTASKS (per node: $SLURM_TASKS_PER_NODE), CPUs per task: ${SLURM_CPUS_PER_TASK:--}"
+    echo "machine: $MACHINE"
+    if [ -n "$SLURM_JOB_ID" ]; then
+        echo "job: $SLURM_JOB_ID (array job ${SLURM_ARRAY_JOB_ID:--}, task ${SLURM_ARRAY_TASK_ID:--})"
+        echo "date: $(date -Is)"
+        echo "nodes: $(scontrol show hostnames "$SLURM_JOB_NODELIST" | paste -sd' ')"
+        echo "tasks: $SLURM_NTASKS (per node: $SLURM_TASKS_PER_NODE), CPUs per task: ${SLURM_CPUS_PER_TASK:--}"
+    else
+        echo "run: $RUN_ID (iteration ${ITERATION:--}), no Slurm"
+        echo "date: $(date -Is)"
+        echo "launcher: $(echo $LAUNCHER)"
+    fi
     echo "profilers: ${PROFILERS[*]}"
     echo "nccl-tests: ${NCCL_TESTS[*]}, args: $NCCL_TESTS_ARGS"
     echo "ncclbench: ${!NCCLBENCH_TESTS[*]}, args: $NCCLBENCH_ARGS"
@@ -52,19 +63,22 @@ write_job_info() {
     fi
     echo "NCCL: $(nccl_version) ($NCCL_HOME)"
     for repo in nccl nccl-tests lib-ncclbench CoMMA ncclsee-cpp; do
-        echo "$repo: $(git -C "$BUILD_DIR/$repo" describe --tags --always)"
+        echo "$repo: $(git -C "$BUILD_DIR/$repo" describe --tags --always 2>/dev/null || echo -)"
     done
     # as the benchmarks see them: same launcher and number of tasks (a step with fewer tasks may get fewer GPUs,
     # e.g. one per task in MUSICA's comfort mode)
     echo; echo "GPUs per node:"
-    $LAUNCHER bash -c '[ "$SLURM_LOCALID" != 0 ] || echo "$(hostname -s): $(nvidia-smi -L | paste -sd" ")"' 2>/dev/null | sort
+    # local rank from Slurm or OpenMPI
+    $LAUNCHER bash -c '[ "${SLURM_LOCALID:-$OMPI_COMM_WORLD_LOCAL_RANK}" != 0 ] || echo "$(hostname -s): $(nvidia-smi -L | paste -sd" ")"' 2>/dev/null | sort
     echo; echo "GPUs visible per rank (CUDA_VISIBLE_DEVICES, nvidia-smi):"
-    $LAUNCHER bash -c 'echo "$(hostname -s) local rank $SLURM_LOCALID: ${CUDA_VISIBLE_DEVICES:-unset}, $(nvidia-smi -L | wc -l) GPUs"' 2>/dev/null | sort
+    $LAUNCHER bash -c 'echo "$(hostname -s) local rank ${SLURM_LOCALID:-$OMPI_COMM_WORLD_LOCAL_RANK}: ${CUDA_VISIBLE_DEVICES:-unset}, $(nvidia-smi -L | wc -l) GPUs"' 2>/dev/null | sort
     echo; echo "modules:"
-    module list 2>&1
+    list_modules
     # everything Slurm applied (incl. what MUSICA's comfort mode set)
-    echo; echo "slurm job:"
-    scontrol show job "$SLURM_JOB_ID"
+    if [ -n "$SLURM_JOB_ID" ]; then
+        echo; echo "slurm job:"
+        scontrol show job "$SLURM_JOB_ID"
+    fi
     # of the job, after loading the modules; the benchmark processes additionally get the profiler settings, the
     # variant's environment and the library path (profiled.sh), see env-rank<N>.txt in the profiler outputs
     echo; echo "environment:"
@@ -93,18 +107,31 @@ run_experiment() {
     check_nccl_version
     # read by profiled.sh on every rank
     export LOG_NCCL="${LOG_NCCL:-false}"
+    # profilers whose plugin is not built (CoMMA on the Sparks) are left out
+    local p available=()
+    for p in "${PROFILERS[@]}"; do
+        if [ -f "$(profiler_plugin "$p")" ]; then
+            available+=("$p")
+        else
+            echo "WARNING: no plugin for $p ($(profiler_plugin "$p")), skipped" >&2
+        fi
+    done
+    PROFILERS=("${available[@]}")
+    # results/<EXPERIMENT>/<run id>: the Slurm job id, or without Slurm RUN_ID from run-local.sh (<machine>-<date>)
+    local run_id="${RUN_ID:-${SLURM_ARRAY_JOB_ID:-$SLURM_JOB_ID}}"
+    [ -n "$run_id" ] || { echo "no run id: neither a Slurm job nor RUN_ID (run-local.sh)" >&2; return 1; }
 
     failed=0
     variant="" variant_env=""
     if [ ${#VARIANTS[@]} -eq 0 ]; then
         # one iteration per array task
-        OUT="$RESULTS_DIR/$EXPERIMENT/${SLURM_ARRAY_JOB_ID:-$SLURM_JOB_ID}/$(printf %02d "${SLURM_ARRAY_TASK_ID:-1}")"
+        OUT="$RESULTS_DIR/$EXPERIMENT/$run_id/$(printf %02d "${ITERATION:-${SLURM_ARRAY_TASK_ID:-1}}")"
         mkdir -p "$OUT"
         write_job_info > "$OUT/job-info.txt"
         run_tests
     else
         # all rounds and variants in this job, on the same nodes
-        local base="$RESULTS_DIR/$EXPERIMENT/$SLURM_JOB_ID" round i n=${#VARIANTS[@]}
+        local base="$RESULTS_DIR/$EXPERIMENT/$run_id" round i n=${#VARIANTS[@]}
         mkdir -p "$base"
         write_job_info > "$base/job-info.txt"
         for ((round = 1; round <= ${ROUNDS:-1}; round++)); do

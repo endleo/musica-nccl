@@ -23,6 +23,19 @@ Open items per experiment (and general ones first), roughly by priority; done it
       `LAUNCHER`). The explicit options full.sbatch had before (untested): `--ntasks-per-node=4 --exclusive
       --cpus-per-task=8 --gres=gpu:4`, no per-task GPU binding
 
+### DGX Spark cluster
+- [ ] First build and quick run on dgx1-3 (`./build.sh`, `./run-local.sh experiments/quick.sbatch`); untested so far:
+      NCCL 2.32.3, nccl-tests, lib-ncclbench and ncclsee with CUDA 13.0 on aarch64, mpirun from spack across the nodes
+- [ ] Network: does NCCL use the RoCE HCAs of the direct links (`NET/IB` in the log of a logging run), and do all
+      channels connect? The links form a ring without a switch and each HCA only reaches one neighbor, while NCCL
+      picks the HCA by the GPU's locality, not by the peer. If not: restrict `NCCL_IB_HCA`, or fall back to sockets
+      (`NCCL_IB_DISABLE=1`, then over `NCCL_SOCKET_IFNAME`, which has to reach both neighbors)
+- [ ] CoMMA on the Sparks (rust, libclang, protobuf; skipped in `build.sh` for now)
+- [ ] Tuning analysis for a Spark run: `tuning.py` has MUSICA's logging run (`LOGGING_RUN`), communicator
+      (`COMM_CHANNELS, COMM_RANKS, COMM_NODES` = 8, 8, 2) and available combinations (`COMBINATIONS`) built in, and
+      its cost model is NCCL 2.27.7's; make them parameters of the run (from a logging run on the Sparks), and check
+      the variants of `tuning.sbatch` against the TUNING table there (3 ranks, one per node; NCCL 2.32)
+
 ## Profiler experiment (`full.sbatch`, `quick.sbatch`)
 
 ### Experiment

@@ -1,6 +1,7 @@
 #!/bin/bash -l
 # Quick check of the setup (< 10 min): ncclsee only, 8 B - 1 MiB, one iteration.
 # Submit from the repository root: sbatch experiments/quick.sbatch
+# (DGX Sparks, no Slurm: ./run-local.sh experiments/quick.sbatch)
 #
 # Uses MUSICA's comfort mode (the default without the ASC vanilla directive, see README): only nodes and GPUs are
 # requested, MUSICA sets the rest. For full GPU nodes (-N X --gres=gpu:4) that is 4 tasks per node, 22 CPUs per
@@ -16,7 +17,7 @@
 #SBATCH --partition=zen4_0768_h100x4
 #SBATCH --qos=dev_zen4_0768_h100x4
 
-cd "$SLURM_SUBMIT_DIR"
+cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"  # without Slurm: run-local.sh
 source ./experiment.sh
 
 EXPERIMENT=quick

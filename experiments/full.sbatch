@@ -1,6 +1,7 @@
 #!/bin/bash -l
 # The full experiment (as on Chameleon): every benchmark once per profiler, 8 B - 1 GiB.
 # Submit from the repository root: sbatch experiments/full.sbatch
+# (DGX Sparks, no Slurm: ./run-local.sh experiments/full.sbatch)
 # Each array task is one iteration of the whole experiment (on whatever nodes the task gets);
 # --array=1-3%1: 3 iterations, at most 1 running at a time. Other count: sbatch --array=1-5%1 experiments/full.sbatch
 #
@@ -20,7 +21,7 @@
 #SBATCH --partition=zen4_0768_h100x4
 #SBATCH --qos=zen4_0768_h100x4
 
-cd "$SLURM_SUBMIT_DIR"
+cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"  # without Slurm: run-local.sh
 source ./experiment.sh
 
 EXPERIMENT=full

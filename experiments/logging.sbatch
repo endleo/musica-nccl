@@ -3,6 +3,7 @@
 # per-call log with what the profiler records), 8 B - 1 GiB, one iteration, with NCCL's debug log for INIT, ENV,
 # GRAPH, TUNING and NET and the topology/graph dumps (nccl_logging_env in config.sh).
 # Submit from the repository root: sbatch experiments/logging.sbatch
+# (DGX Sparks, no Slurm: ./run-local.sh experiments/logging.sbatch)
 #
 # The TUNING log writes a line per call on rank 0, which adds host time to every call: the times of this run are
 # not comparable to the other experiments.
@@ -15,7 +16,7 @@
 #SBATCH --partition=zen4_0768_h100x4
 #SBATCH --qos=zen4_0768_h100x4
 
-cd "$SLURM_SUBMIT_DIR"
+cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"  # without Slurm: run-local.sh
 source ./experiment.sh
 
 EXPERIMENT=logging

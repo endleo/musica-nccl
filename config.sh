@@ -5,7 +5,19 @@
 # environment
 # ---------------------------------------------------------------------------------------------
 
+# the cluster: musica (x86_64, H100, Slurm, modules) or spark (3 DGX Sparks dgx1-3, aarch64, GB10, no Slurm, spack;
+# experiments are started with run-local.sh on dgx1). Detected from the CPU architecture; set MACHINE to override
+MACHINE="${MACHINE:-$([ "$(uname -m)" = aarch64 ] && echo spark || echo musica)}"
+
 load_modules() {
+    case $MACHINE in
+        musica) load_modules_musica ;;
+        spark) load_modules_spark ;;
+        *) echo "unknown MACHINE $MACHINE" >&2; return 1 ;;
+    esac
+}
+
+load_modules_musica() {
     module purge
     module load NCCL/2.27.7-GCCcore-14.3.0-CUDA-12.9.1
     module load gompi/2025b
@@ -18,6 +30,33 @@ load_modules() {
     export NCCL_HOME="${NCCL_HOME:-${NCCL_ROOT:-${EBROOTNCCL:-}}}"  # EBROOTNCCL: set by EasyBuild modules
     export CUDA_HOME="${CUDA_HOME:-$(dirname "$(dirname "$(command -v nvcc)")")}"
     export MPI_HOME="${MPI_HOME:-$(dirname "$(dirname "$(command -v mpicc)")")}"
+}
+
+# DGX Sparks: OpenMPI from the shared spack (/opt/dgx-shared), the preinstalled CUDA, and NCCL built by build.sh
+# from the NCCL_TAG checkout (spack also has an NCCL 2.31.2, not used)
+SPACK_ROOT="${SPACK_ROOT:-/opt/dgx-shared/spack/spack_git}"
+load_modules_spark() {
+    source "$SPACK_ROOT/share/spack/setup-env.sh"
+    spack load openmpi@5.0.10
+    export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
+    export PATH="$CUDA_HOME/bin:$PATH"  # not in the PATH there; cmake finds CUDA by nvcc
+    export NCCL_HOME="${NCCL_HOME:-$BUILD_DIR/nccl/build}"
+    export MPI_HOME="${MPI_HOME:-$(dirname "$(dirname "$(command -v mpicc)")")}"
+    # one rank per node (one GPU each). --prefix: OpenMPI's daemons on the other nodes are started from there, the
+    # non-interactive ssh shells there do not have spack's OpenMPI in their PATH.
+    # MPI (startup, barriers of the benchmarks) over the university network (enP7s7): the direct links between the
+    # nodes are point-to-point subnets (/etc/hosts), so not every node reaches every address on them.
+    # mpirun does not pass the environment on: -x for the paths profiled.sh needs (runtime_library_path)
+    LAUNCHER="$MPI_HOME/bin/mpirun --prefix $MPI_HOME -np 3 --host dgx1:1,dgx2:1,dgx3:1 --mca btl self,tcp
+        --mca btl_tcp_if_include enP7s7 --mca oob_tcp_if_include enP7s7 -x NCCL_HOME -x CUDA_HOME -x MPI_HOME"
+}
+
+# the loaded modules / spack packages, for job-info.txt
+list_modules() {
+    case $MACHINE in
+        musica) module list 2>&1 ;;
+        spark) spack find --loaded 2>&1 ;;
+    esac
 }
 
 # Library directories our binaries need at runtime. The modules on MUSICA come from EESSI (/cvmfs/software.eessi.io),
@@ -52,10 +91,14 @@ check_nccl_version() {
     fi
 }
 
-# GPU architecture to compile for, e.g. 90 for H100
-CUDA_ARCH="90"
+# GPU architecture to compile for: 90 for H100 (MUSICA), 121 for GB10 (DGX Spark)
+case $MACHINE in
+    spark) CUDA_ARCH="121" ;;
+    *) CUDA_ARCH="90" ;;
+esac
 
-# launcher for the benchmarks inside the job, one process per task
+# launcher for the benchmarks inside the job, one process per task (MUSICA; on the Sparks set in load_modules_spark,
+# since it needs the MPI path)
 # --gpu-bind=none: every rank sees all GPUs of its node; both benchmarks pick their GPU by the local rank among all
 # visible GPUs, so with one GPU per rank (e.g. MUSICA's comfort mode) ranks 1-3 fail ("invalid device ordinal")
 LAUNCHER="srun --cpu-bind=verbose --gpu-bind=none"
@@ -66,11 +109,15 @@ LAUNCHER="srun --cpu-bind=verbose --gpu-bind=none"
 # versions (same as the Chameleon experiment)
 # ---------------------------------------------------------------------------------------------
 
-# NCCL itself comes from the module; this checkout is only used for the profiler headers CoMMA builds
+# MUSICA: NCCL itself comes from the module; this checkout is only used for the profiler headers CoMMA builds
 # against (and the sources of the Inspector, which only exists since v2.29.7) -> has to match the module's version.
 # NCCL 2.27 loads profiler plugins up to API v4: fine for CoMMA and ncclsee (v4), but the Inspector (v5 only)
 # cannot be used with it, so build.sh skips it.
-NCCL_TAG="v2.27.7-1"
+# Sparks: no NCCL module, build.sh builds this checkout (2.32.3, as on Chameleon; not meant to match MUSICA)
+case $MACHINE in
+    spark) NCCL_TAG="v2.32.3-1" ;;
+    *) NCCL_TAG="v2.27.7-1" ;;
+esac
 NCCL_TESTS_TAG="v2.19.6"
 NCCLBENCH_COMMIT="3b9d2c4ffb73a486fcae4eb3f881ad6efe93f3fc"
 COMMA_COMMIT="1d5b9676f66c1ab560bccd69f13745c11f0437a5"
@@ -104,6 +151,23 @@ NCCLSEE_PLUGIN="$BUILD_DIR/ncclsee-cpp/build/libncclsee.so"
 # profiler plugins (see notes/nccl-broadcast-profiler-events.md in the Chameleon project); NCCL 2.27 does not
 # have this variable and ignores it
 export NCCL_ALLGATHERV_ENABLE=0
+
+# Sparks: NCCL's bootstrap over the university network, which connects all nodes; the data goes over the RoCE HCAs
+# of the direct links (4 per node, NCCL picks them). The links form a ring (each pair of nodes has its own two /30
+# subnets, no switch), so a node only reaches its neighbors' addresses on the link to them
+# TODO (TODO.md): check in the quick run that NCCL uses the HCAs (NET/IB in the log) and that all channels connect
+if [ "$MACHINE" = spark ]; then
+    export NCCL_SOCKET_IFNAME=enP7s7
+fi
+
+# plugin of a profiler (empty if unknown)
+profiler_plugin() {
+    case $1 in
+        comma) echo "$COMMA_PLUGIN" ;;
+        inspector) echo "$INSPECTOR_PLUGIN" ;;
+        ncclsee) echo "$NCCLSEE_PLUGIN" ;;
+    esac
+}
 
 # environment per profiler: profiler_env <profiler> <output directory of this process (per node)>
 profiler_env() {

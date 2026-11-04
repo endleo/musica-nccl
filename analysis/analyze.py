@@ -140,8 +140,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("run", nargs="?", type=Path, help="run folder (default: newest in results/*/)")
     args = parser.parse_args()
-    # job ids increase, so the newest run is the one with the highest id
-    run = args.run or max((p for p in RESULTS.glob("*/*") if p.name.isdigit()), key=lambda p: int(p.name))
+    run = args.run or pr.newest_run(RESULTS.glob("*/*"))
     if tuning.is_tuning_run(run):
         tuning.analyze(run)
         return
