@@ -98,7 +98,12 @@ run_tests() {
         done
     done
 
-    # one archive per iteration, as on Chameleon (the analysis extracts it)
+    # one archive per iteration, as on Chameleon (the analysis extracts it).
+    # DGX Sparks: dgx1 is the NFS server of /home, and dgx2/3 can still hold NFSv4 delegations on the files their
+    # ranks wrote. tar opens with O_NONBLOCK, so on the server that fails with EAGAIN ("Resource temporarily
+    # unavailable") instead of waiting for the delegation to be returned. Reading every file first with a normal
+    # (blocking) open recalls the delegations and waits for them.
+    find "$OUT/profiler-out" -type f -exec cat {} + >/dev/null
     tar czf "$OUT/profiler-out.tar.gz" -C "$OUT" profiler-out && rm -rf "$OUT/profiler-out"
 }
 
