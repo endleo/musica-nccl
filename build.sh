@@ -41,6 +41,10 @@ fetch() {
     # ncclsee-cpp bundles its own profiler headers; submodules: spdlog, nlohmann/json, range-v3
     clone https://github.com/ruben-laso/ncclsee-cpp.git ncclsee-cpp "$NCCLSEE_COMMIT"
     git -C ncclsee-cpp submodule update --init --recursive
+    # race between NCCL's user and proxy thread in ncclsee's event trees (segfault, see the patch); applied once,
+    # skipped if already applied
+    local patch="$REPO_DIR/files/ncclsee/tree-mutex.patch"
+    git -C ncclsee-cpp apply --reverse --check "$patch" 2>/dev/null || git -C ncclsee-cpp apply "$patch"
 
     [ "$MACHINE" != spark ] || { echo "Skipping CoMMA on $MACHINE"; return; }
 

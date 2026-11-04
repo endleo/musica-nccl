@@ -42,6 +42,7 @@ analysis/
   tuning_musica.py    evaluation of a MUSICA tuning run (choices per variant, cost model, rounds, pinned vs. default)
   profiler_results.py parsing of benchmark and profiler outputs (copied from the Chameleon project)
 files/comma/Cargo.lock  pinned crate versions for the CoMMA build (its repo has none)
+files/ncclsee/tree-mutex.patch  fix of a race in ncclsee-cpp's event trees, applied by build.sh (see the patch)
 results/<experiment>/<job>/<NN>/   output of each array task (<job>: Slurm job id, or <machine>-<date> without Slurm)
 logs/                 Slurm job output, run-local.sh output (not in git)
 ```

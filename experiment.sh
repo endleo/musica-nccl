@@ -65,6 +65,9 @@ write_job_info() {
     for repo in nccl nccl-tests lib-ncclbench CoMMA ncclsee-cpp; do
         echo "$repo: $(git -C "$BUILD_DIR/$repo" describe --tags --always 2>/dev/null || echo -)"
     done
+    # local patch of ncclsee-cpp (build.sh): applied in the checkout? (the plugin is built from the checkout)
+    git -C "$BUILD_DIR/ncclsee-cpp" apply --reverse --check "$REPO_DIR/files/ncclsee/tree-mutex.patch" 2>/dev/null \
+        && echo "ncclsee-cpp patch: tree-mutex.patch" || echo "ncclsee-cpp patch: none"
     # as the benchmarks see them: same launcher and number of tasks (a step with fewer tasks may get fewer GPUs,
     # e.g. one per task in MUSICA's comfort mode)
     echo; echo "GPUs per node:"
