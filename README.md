@@ -93,7 +93,7 @@ to MUSICA, all in `config.sh` (`MACHINE=spark`) unless stated:
   `--array` (`full`: 3) and run one after the other. Run ids are `spark-<date>-<time>`, e.g.
   `results/full/spark-20261104-153000/01/`, so they cannot clash with MUSICA's job ids in a `results/` fetched from
   both; `analyze.py` and `tuning.py` pick the newest run by the date in `job-info.txt`
-- `LAUNCHER`: `mpirun` with one rank per node (`--prefix`, so the other nodes find OpenMPI's daemons). mpirun does
+- `LAUNCHER`: `mpirun` with one rank per node (`--prefix` PRRTE's install, so the other nodes find its daemon `prted`: spack's OpenMPI uses an external PRRTE). mpirun does
   not pass the environment on, so `experiment.sh` sets the variant's environment and `LOG_NCCL` per rank behind the
   launcher, and `-x` passes the library paths; `profiled.sh` sets the rest as before
 - network: the nodes are connected in a ring by direct links (two point-to-point /30 subnets per pair of nodes, no

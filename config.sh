@@ -42,12 +42,14 @@ load_modules_spark() {
     export PATH="$CUDA_HOME/bin:$PATH"  # not in the PATH there; cmake finds CUDA by nvcc
     export NCCL_HOME="${NCCL_HOME:-$BUILD_DIR/nccl/build}"
     export MPI_HOME="${MPI_HOME:-$(dirname "$(dirname "$(command -v mpicc)")")}"
-    # one rank per node (one GPU each). --prefix: OpenMPI's daemons on the other nodes are started from there, the
-    # non-interactive ssh shells there do not have spack's OpenMPI in their PATH.
+    # spack's OpenMPI uses an external PRRTE (~internal-prrte): its daemon prted is in PRRTE's prefix, not in MPI_HOME
+    PRRTE_HOME="$(dirname "$(dirname "$(command -v prted)")")"
+    # one rank per node (one GPU each). --prefix: PRRTE's daemons (prted) on the other nodes are started from there,
+    # the non-interactive ssh shells there do not have spack's packages in their PATH.
     # MPI (startup, barriers of the benchmarks) over the university network (enP7s7): the direct links between the
     # nodes are point-to-point subnets (/etc/hosts), so not every node reaches every address on them.
     # mpirun does not pass the environment on: -x for the paths profiled.sh needs (runtime_library_path)
-    LAUNCHER="$MPI_HOME/bin/mpirun --prefix $MPI_HOME -np 3 --host dgx1:1,dgx2:1,dgx3:1 --mca btl self,tcp
+    LAUNCHER="$MPI_HOME/bin/mpirun --prefix $PRRTE_HOME -np 3 --host dgx1:1,dgx2:1,dgx3:1 --mca btl self,tcp
         --mca btl_tcp_if_include enP7s7 --mca oob_tcp_if_include enP7s7 -x NCCL_HOME -x CUDA_HOME -x MPI_HOME"
 }
 
