@@ -72,6 +72,10 @@ write_job_info() {
     $LAUNCHER bash -c '[ "${SLURM_LOCALID:-$OMPI_COMM_WORLD_LOCAL_RANK}" != 0 ] || echo "$(hostname -s): $(nvidia-smi -L | paste -sd" ")"' 2>/dev/null | sort
     echo; echo "GPUs visible per rank (CUDA_VISIBLE_DEVICES, nvidia-smi):"
     $LAUNCHER bash -c 'echo "$(hostname -s) local rank ${SLURM_LOCALID:-$OMPI_COMM_WORLD_LOCAL_RANK}: ${CUDA_VISIBLE_DEVICES:-unset}, $(nvidia-smi -L | wc -l) GPUs"' 2>/dev/null | sort
+    # the CPUs each rank may run on (binding of the launcher; one line per rank, but not "local rank", which
+    # profiler_results._job_info_ranks counts)
+    echo; echo "CPU affinity per rank (taskset):"
+    $LAUNCHER bash -c 'echo "$(hostname -s) rank ${SLURM_PROCID:-$OMPI_COMM_WORLD_RANK}: $(taskset -pc $$ | sed "s/.*: //")"' 2>/dev/null | sort
     echo; echo "modules:"
     list_modules
     # everything Slurm applied (incl. what MUSICA's comfort mode set)

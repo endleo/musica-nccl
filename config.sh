@@ -49,8 +49,15 @@ load_modules_spark() {
     # MPI (startup, barriers of the benchmarks) over the university network (enP7s7): the direct links between the
     # nodes are point-to-point subnets (/etc/hosts), so not every node reaches every address on them.
     # mpirun does not pass the environment on: -x for the paths profiled.sh needs (runtime_library_path)
-    LAUNCHER="$MPI_HOME/bin/mpirun --prefix $PRRTE_HOME -np 3 --host dgx1:1,dgx2:1,dgx3:1 --mca btl self,tcp
-        --mca btl_tcp_if_include enP7s7 --mca oob_tcp_if_include enP7s7 -x NCCL_HOME -x CUDA_HOME -x MPI_HOME"
+    # CPUs: mpirun's default binding put each rank on CPU 0 alone, where the benchmark's main thread (busy-waiting
+    # on the stream) starved NCCL's proxy thread (ncclbench at ~45 % of nccl-tests' bandwidth, ms per small call).
+    # Each rank is pinned to the 10 performance cores (Cortex-X925, 3.9 GHz; 0-4 and 10-14 are the Cortex-A725
+    # efficiency cores, lscpu -e) with taskset rather than mpirun's --map-by: lscpu reports the core ids of both
+    # clusters twice, so mpirun's per-core mapping may not pick these. The affinity is recorded in job-info.txt.
+    SPARK_CPUS="${SPARK_CPUS:-5-9,15-19}"
+    LAUNCHER="$MPI_HOME/bin/mpirun --prefix $PRRTE_HOME -np 3 --host dgx1:1,dgx2:1,dgx3:1 --bind-to none
+        --mca btl self,tcp --mca btl_tcp_if_include enP7s7 --mca oob_tcp_if_include enP7s7
+        -x NCCL_HOME -x CUDA_HOME -x MPI_HOME taskset -c $SPARK_CPUS"
 }
 
 # the loaded modules / spack packages, for job-info.txt

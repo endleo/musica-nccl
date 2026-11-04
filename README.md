@@ -97,6 +97,11 @@ to MUSICA, all in `config.sh` (`MACHINE=spark`) unless stated:
   `prted`: spack's OpenMPI uses an external PRRTE). mpirun does not pass the environment on, so `experiment.sh`
   sets the variant's environment and `LOG_NCCL` per rank behind the launcher, and `-x` passes the library paths;
   `profiled.sh` sets the rest as before
+- CPUs: each rank runs on the 10 performance cores (`SPARK_CPUS=5-9,15-19`, Cortex-X925; the others are Cortex-A725
+  efficiency cores), pinned with `taskset` behind `mpirun --bind-to none`. With mpirun's default binding every rank
+  was on CPU 0 alone, where the benchmark's busy-waiting main thread starved NCCL's proxy thread: ncclbench reached
+  ~45 % of nccl-tests' bandwidth and took ms per small call (as with CoMMA on Chameleon, see below).
+  `job-info.txt` records the affinity of every rank (`CPU affinity per rank`)
 - network: the nodes are connected in a ring by direct links (two point-to-point /30 subnets per pair of nodes, no
   switch, 4 RoCE HCAs per node), so a node only reaches its two neighbors' addresses on them. MPI and NCCL's
   bootstrap use the university network (`enP7s7`), which connects all nodes; NCCL's data goes over the HCAs, with
