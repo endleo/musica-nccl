@@ -153,11 +153,15 @@ NCCLSEE_PLUGIN="$BUILD_DIR/ncclsee-cpp/build/libncclsee.so"
 export NCCL_ALLGATHERV_ENABLE=0
 
 # Sparks: NCCL's bootstrap over the university network, which connects all nodes; the data goes over the RoCE HCAs
-# of the direct links (4 per node, NCCL picks them). The links form a ring (each pair of nodes has its own two /30
-# subnets, no switch), so a node only reaches its neighbors' addresses on the link to them
-# TODO (TODO.md): check in the quick run that NCCL uses the HCAs (NET/IB in the log) and that all channels connect
+# of the direct links (4 per node). The links form a ring (each pair of nodes has its own two /30 subnets, no
+# switch), so each HCA only reaches one neighbor. By default NCCL picks the HCA by the GPU's locality, not by the
+# peer; with subnet-aware routing (NCCL >= 2.32, src/transport/net_ib/connect.cc, default off) the connecting side
+# takes a local HCA on the same subnet as the listener's ports ("NET/IB: Subnet-aware routing: overriding dev" in
+# the NET log)
+# TODO (TODO.md): check in a logging run that NCCL uses the HCAs and that all channels connect
 if [ "$MACHINE" = spark ]; then
     export NCCL_SOCKET_IFNAME=enP7s7
+    export NCCL_IB_SUBNET_AWARE_ROUTING=1
 fi
 
 # plugin of a profiler (empty if unknown)

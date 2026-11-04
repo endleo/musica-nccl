@@ -98,7 +98,8 @@ to MUSICA, all in `config.sh` (`MACHINE=spark`) unless stated:
   launcher, and `-x` passes the library paths; `profiled.sh` sets the rest as before
 - network: the nodes are connected in a ring by direct links (two point-to-point /30 subnets per pair of nodes, no
   switch, 4 RoCE HCAs per node), so a node only reaches its two neighbors' addresses on them. MPI and NCCL's
-  bootstrap use the university network (`enP7s7`), which connects all nodes; NCCL's data goes over the HCAs
+  bootstrap use the university network (`enP7s7`), which connects all nodes; NCCL's data goes over the HCAs, with
+  `NCCL_IB_SUBNET_AWARE_ROUTING=1` (NCCL >= 2.32) so that it picks the HCA on the link to the peer
 - the home directory is NFS (exported by dgx1), so `build/` and `results/` are the same on all nodes
 
 Before the first run on dgx1: passwordless ssh from dgx1 to dgx2 and dgx3 must work without a prompt, including
