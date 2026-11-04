@@ -38,8 +38,8 @@ report/               summaries (Typst), one folder per experiment
   tuning/summary.typ     tuning experiment: pinned vs. NCCL's choice, NCCL's estimates vs. measured times
 analysis/
   analyze.py          plots and tables of a run (the evaluation cells of the Chameleon notebook); runs with
-                      variants (tuning) are handed to tuning.py
-  tuning.py           evaluation of a tuning run (choices per variant, cost model, rounds, pinned vs. default)
+                      variants (tuning) are handed to tuning_musica.py
+  tuning_musica.py    evaluation of a MUSICA tuning run (choices per variant, cost model, rounds, pinned vs. default)
   profiler_results.py parsing of benchmark and profiler outputs (copied from the Chameleon project)
 files/comma/Cargo.lock  pinned crate versions for the CoMMA build (its repo has none)
 results/<experiment>/<job>/<NN>/   output of each array task (<job>: Slurm job id, or <machine>-<date> without Slurm)
@@ -92,10 +92,11 @@ to MUSICA, all in `config.sh` (`MACHINE=spark`) unless stated:
   `full` takes about an hour). The `#SBATCH` lines are only comments then; the iterations default to the batch file's
   `--array` (`full`: 3) and run one after the other. Run ids are `spark-<date>-<time>`, e.g.
   `results/full/spark-20261104-153000/01/`, so they cannot clash with MUSICA's job ids in a `results/` fetched from
-  both; `analyze.py` and `tuning.py` pick the newest run by the date in `job-info.txt`
-- `LAUNCHER`: `mpirun` with one rank per node (`--prefix` PRRTE's install, so the other nodes find its daemon `prted`: spack's OpenMPI uses an external PRRTE). mpirun does
-  not pass the environment on, so `experiment.sh` sets the variant's environment and `LOG_NCCL` per rank behind the
-  launcher, and `-x` passes the library paths; `profiled.sh` sets the rest as before
+  both; `analyze.py` and `tuning_musica.py` pick the newest run by the date in `job-info.txt`
+- `LAUNCHER`: `mpirun` with one rank per node (`--prefix` PRRTE's install, so the other nodes find its daemon
+  `prted`: spack's OpenMPI uses an external PRRTE). mpirun does not pass the environment on, so `experiment.sh`
+  sets the variant's environment and `LOG_NCCL` per rank behind the launcher, and `-x` passes the library paths;
+  `profiled.sh` sets the rest as before
 - network: the nodes are connected in a ring by direct links (two point-to-point /30 subnets per pair of nodes, no
   switch, 4 RoCE HCAs per node), so a node only reaches its two neighbors' addresses on them. MPI and NCCL's
   bootstrap use the university network (`enP7s7`), which connects all nodes; NCCL's data goes over the HCAs, with
@@ -186,8 +187,11 @@ the tuning run first (it also needs the logging run 1889653 in `results/`, for N
   against the spread within an iteration
 - `reported_times.txt`: mean times per size, as the tables in the Chameleon notebook
 
-For a tuning run (`results/tuning/<job>/<round>/<variant>/`), `analyze.py` calls `tuning.py`, which extracts the
-profiler outputs of every variant and writes into the run folder (ncclbench times, all rounds together unless stated):
+For a tuning run (`results/tuning/<job>/<round>/<variant>/`), `analyze.py` calls `tuning_musica.py` (MUSICA only),
+which extracts the profiler outputs of every variant and writes into the run folder (ncclbench times, all rounds
+together unless stated). Before that, it checks the run against what it assumes (MUSICA, NCCL 2.27.7, 2 nodes x 4
+H100, the 3 rounds and 7 variants of `tuning.sbatch`, 8 channels, logging run 1889653) and aborts with the list of
+mismatches if anything differs. It writes:
 
 - `choices.txt`: algorithm, protocol, channels and warps `ncclsee` recorded per variant and size, checked against
   what was pinned; NCCL's choice compared with the logging run 1889653 and with the cost model

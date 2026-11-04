@@ -8,7 +8,8 @@ folder: violins.pdf per iteration; recorded_operations.pdf, recorded_by_size.pdf
 iteration_consistency.pdf
 and reported_times.txt per run.
 
-Runs with variants (tuning experiment: <run>/<round>/<variant>/) are evaluated by tuning.py instead.
+Runs with variants (tuning experiment: <run>/<round>/<variant>/) are evaluated by tuning_musica.py instead
+(MUSICA only).
 """
 
 import argparse
@@ -22,7 +23,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 import profiler_results as pr
-import tuning
+import tuning_musica as tuning  # MUSICA only (built-in logging run, communicator, cost model of NCCL 2.27.7)
 
 RESULTS = Path(__file__).resolve().parent.parent / "results"
 
