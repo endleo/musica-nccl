@@ -15,6 +15,20 @@ Open items per experiment (and general ones first), roughly by priority; done it
     the module is tuned at all; check the module's environment (`module show`, `NCCL_*` variables it sets)
 - [ ] With NCCL >= 2.29.2: check that the broadcast workaround (`NCCL_ALLGATHERV_ENABLE=0`) is still needed
 
+### Analysis scripts
+- [ ] Review `analysis/` (`analyze.py`, `tuning_musica.py`, `profiler_results.py`) and build a test suite for it:
+  - the scripts have grown hard to follow: assumptions about the run spread over constants, parsing and
+    fallbacks (e.g. the rank count for ncclbench: nccl-tests output, else `job-info.txt`), problems only warned
+    about or silently skipped (missing iterations or benchmark outputs, unknown ncclsee data types, differing
+    settings between iterations, ncclbench without `--blocking`); one place that parses `job-info.txt`
+    (`tuning_musica.job_info`) instead of a regex per call site
+  - regression tests against the existing runs: the outputs of `full/1863257`, `full/1874191`, `quick/1863239`,
+    `tuning/1893400` (text identical, PDFs identical when rendered), run on copies so `results/` stays untouched;
+    the logging runs (1889653, `spark-20261104-154532`) have no outputs yet, so take their first outputs as the
+    reference after a check by hand
+  - unit tests for the parsers (`job-info.txt`, ncclbench csv, nccl-tests table and header, the profiler
+    formats, NCCL's TUNING table) and for the run checks of `tuning_musica.py`, with small fixtures
+
 ### Slurm
 - [ ] Switch all batch files in `experiments/` from MUSICA's comfort mode to explicit
       options with `#ASC --vanilla`, so the batch files state their options without MUSICA-specific defaults;
@@ -22,6 +36,21 @@ Open items per experiment (and general ones first), roughly by priority; done it
       1863221/1863239: 4 tasks per node, 22 CPUs per task, exclusive, one GPU per task (-> `--gpu-bind=none` in
       `LAUNCHER`). The explicit options full.sbatch had before (untested): `--ntasks-per-node=4 --exclusive
       --cpus-per-task=8 --gres=gpu:4`, no per-task GPU binding
+
+### DGX Spark cluster
+- [ ] First build and quick run on dgx1-3 (`./build.sh`, `./run-local.sh experiments/quick.sbatch`); untested so far:
+      NCCL 2.32.3, nccl-tests, lib-ncclbench and ncclsee with CUDA 13.0 on aarch64, mpirun from spack across the nodes
+- [ ] Network: does NCCL use the RoCE HCAs of the direct links (`NET/IB` in the log of a logging run), and do all
+      channels connect? The links form a ring without a switch and each HCA only reaches one neighbor, while NCCL
+      picks the HCA by the GPU's locality, not by the peer; `NCCL_IB_SUBNET_AWARE_ROUTING=1` (config.sh, as in an
+      earlier run on the Sparks by someone else) should pick the HCA on the peer's subnet instead: check for
+      "Subnet-aware routing: overriding dev" in the NET log. If it does not work: restrict `NCCL_IB_HCA`, or fall back
+      to sockets (`NCCL_IB_DISABLE=1`, then over `NCCL_SOCKET_IFNAME`, which has to reach both neighbors)
+- [ ] CoMMA on the Sparks (rust, libclang, protobuf; skipped in `build.sh` for now)
+- [ ] Tuning analysis for a Spark run: `tuning_musica.py` has MUSICA's logging run (`LOGGING_RUN`), communicator
+      (`COMM_CHANNELS, COMM_RANKS, COMM_NODES` = 8, 8, 2) and available combinations (`COMBINATIONS`) built in, and
+      its cost model is NCCL 2.27.7's; make them parameters of the run (from a logging run on the Sparks), and check
+      the variants of `tuning.sbatch` against the TUNING table there (3 ranks, one per node; NCCL 2.32)
 
 ## Profiler experiment (`full.sbatch`, `quick.sbatch`)
 

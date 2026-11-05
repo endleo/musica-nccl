@@ -1,12 +1,14 @@
 #!/bin/bash -l
 #ASC --vanilla
 # Fetches and builds nccl-tests, lib-ncclbench and the profiler plugins into build/ (versions in config.sh),
-# against the NCCL, CUDA and MPI of the modules. Run from the repository root:
+# against the NCCL, CUDA and MPI of the modules. On the DGX Sparks (MACHINE=spark, config.sh) NCCL itself is built
+# too, and CoMMA is left out for now (its build needs rust, libclang and protobuf). Run from the repository root:
 #   ./build.sh                  fetch + compile (on a login node)
 #   ./build.sh fetch            only download sources, rust and crates (needs internet)
 #   sbatch build.sh compile     compile on a compute node (after fetch, e.g. if the login node has no nvcc)
-#   ./build.sh clean            remove the build outputs (keeps sources, rust and crates), e.g. after changing modules:
-#                               make and cmake do not notice that, and cmake keeps the CUDA it found in its cache
+#   ./build.sh clean            remove the build outputs (keeps sources, rust and crates; on the Sparks also NCCL's),
+#                               e.g. after changing modules: make and cmake do not notice that, and cmake keeps the
+#                               CUDA it found in its cache
 # the ASC directive above: vanilla mode, i.e. plain Slurm on MUSICA, the options below apply as written (see README)
 #SBATCH --job-name=musica-nccl-build
 #SBATCH --nodes=1
@@ -39,6 +41,12 @@ fetch() {
     # ncclsee-cpp bundles its own profiler headers; submodules: spdlog, nlohmann/json, range-v3
     clone https://github.com/ruben-laso/ncclsee-cpp.git ncclsee-cpp "$NCCLSEE_COMMIT"
     git -C ncclsee-cpp submodule update --init --recursive
+    # race between NCCL's user and proxy thread in ncclsee's event trees (segfault, see the patch); applied once,
+    # skipped if already applied
+    local patch="$REPO_DIR/files/ncclsee/tree-mutex.patch"
+    git -C ncclsee-cpp apply --reverse --check "$patch" 2>/dev/null || git -C ncclsee-cpp apply "$patch"
+
+    [ "$MACHINE" != spark ] || { echo "Skipping CoMMA on $MACHINE"; return; }
 
     # CoMMA reads the NCCL profiler headers from its nccl submodule; point it at our NCCL checkout instead.
     # Its repo has no Cargo.lock; ours is from a working build of COMMA_COMMIT (same as on Chameleon)
@@ -54,11 +62,16 @@ fetch() {
 compile() {
     load_modules
     [ -n "$CUDA_ARCH" ] || { echo "CUDA_ARCH is not set (config.sh)" >&2; exit 1; }
+    local jobs=${SLURM_CPUS_PER_TASK:-8}
+    # no NCCL module on the Sparks: built from the checkout, into NCCL_HOME (nccl/build); only for our GPU
+    if [ "$MACHINE" = spark ] && [ "$NCCL_HOME" = "$BUILD_DIR/nccl/build" ]; then
+        make -C "$BUILD_DIR/nccl" -j "$jobs" src.build CUDA_HOME="$CUDA_HOME" \
+            NVCC_GENCODE="-gencode=arch=compute_$CUDA_ARCH,code=sm_$CUDA_ARCH"
+    fi
     [ -f "$NCCL_HOME/include/nccl.h" ] || { echo "no nccl.h in NCCL_HOME=$NCCL_HOME" >&2; exit 1; }
     echo "NCCL $(nccl_version) from $NCCL_HOME, sources for the plugins: $NCCL_TAG"
     check_nccl_version
     echo "CUDA from $CUDA_HOME, MPI from $MPI_HOME"
-    local jobs=${SLURM_CPUS_PER_TASK:-8}
     cd "$BUILD_DIR"
 
     make -C nccl-tests -j "$jobs" MPI=1 MPI_HOME="$MPI_HOME" NCCL_HOME="$NCCL_HOME" CUDA_HOME="$CUDA_HOME" \
@@ -81,12 +94,14 @@ compile() {
         -DCMAKE_CUDA_COMPILER="$CUDA_HOME/bin/nvcc" -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH"
     cmake --build ncclsee-cpp/build --parallel "$jobs"
 
-    # bindgen (clang-sys) would take the libclang with the highest version anywhere on the system (on MUSICA an
-    # incomplete /usr/lib64/llvm21, which lacks libLLVM); LIBCLANG_PATH restricts it to the loaded LLVM module.
-    # --locked: fail instead of resolving other crate versions than in Cargo.lock
-    (cd CoMMA && LIBCLANG_PATH="$(llvm-config --libdir)" "$CARGO_HOME/bin/cargo" build --release --locked --jobs "$jobs")
+    local outputs=("$NCCL_TESTS_BIN"/{all_reduce,broadcast}_perf "$NCCLBENCH_BIN" "$NCCLSEE_PLUGIN")
+    if [ "$MACHINE" = spark ]; then
+        echo "Skipping CoMMA on $MACHINE"
+    else
+        compile_comma
+        outputs+=("$COMMA_PLUGIN")
+    fi
 
-    local outputs=("$NCCL_TESTS_BIN"/{all_reduce,broadcast}_perf "$NCCLBENCH_BIN" "$COMMA_PLUGIN" "$NCCLSEE_PLUGIN")
     ls -l "${outputs[@]}"
     # libraries that cannot be found at runtime (with the library path of profiled.sh), e.g. outputs of an earlier
     # build against another CUDA
@@ -95,9 +110,17 @@ compile() {
     fi
 }
 
+compile_comma() {
+    # bindgen (clang-sys) would take the libclang with the highest version anywhere on the system (on MUSICA an
+    # incomplete /usr/lib64/llvm21, which lacks libLLVM); LIBCLANG_PATH restricts it to the loaded LLVM module.
+    # --locked: fail instead of resolving other crate versions than in Cargo.lock
+    (cd CoMMA && LIBCLANG_PATH="$(llvm-config --libdir)" "$CARGO_HOME/bin/cargo" build --release --locked --jobs "$jobs")
+}
+
 clean() {
     cd "$BUILD_DIR"
     rm -rf nccl-tests/build lib-ncclbench/build ncclsee-cpp/build CoMMA/target
+    [ "$MACHINE" != spark ] || rm -rf nccl/build
     [ ! -d nccl/plugins/profiler/inspector ] || make -C nccl/plugins/profiler/inspector clean
 }
 

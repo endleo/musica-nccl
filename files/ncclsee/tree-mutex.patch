@@ -1,0 +1,95 @@
+ncclsee-cpp 0e8433a: lock the event trees (applied by build.sh after cloning)
+
+NCCL calls the profiler from the user thread and from its proxy thread. The proxy thread inserts KernelCh events
+into their collective's children (Context::create_event_generic, an unlocked std::set) while the user thread stops
+the collective inside ncclAllReduce and walks the whole tree for trace logging (EventBase::report_parent ->
+report_children; the arguments are evaluated even with trace logging off). Concurrently, that is undefined
+behavior; on the DGX Sparks, with every rank on 10 cores, ncclbench crashed in EventBase::report (SIGSEGV, address
+0x90). With every rank on CPU 0 alone (mpirun's default binding before), the two threads hardly ever overlapped.
+
+Fix: one recursive mutex per communicator (Context::tree_mtx), held while inserting children, while walking the
+tree in report_parent (recursive: it recurses to the root), and while creating a group (the pool may flush there,
+and its callback walks the trees of the finished groups). The tree walk itself stays, so ncclsee does the same work
+per event as before, plus the lock. Upstream's unmerged branch refactor_writing (9209b75) fixes the same race by
+locking the insertion and dropping report_parent altogether.
+
+diff --git a/ncclsee/v4/events/context.hpp b/ncclsee/v4/events/context.hpp
+index 797cd30..db9b7b4 100644
+--- a/ncclsee/v4/events/context.hpp
++++ b/ncclsee/v4/events/context.hpp
+@@ -5,6 +5,7 @@
+ #include <atomic>
+ #include <exception>
+ #include <memory>
++#include <mutex>
+ 
+ #include "ncclsee/v4/events/event.hpp"
+ 
+@@ -90,6 +91,8 @@ struct Context {
+     static auto create_group(void *context_ptr, void **eHandle,
+                              ncclProfilerEventDescr_v4_t *eDescr) -> Group & {
+         auto context = static_cast<Context *>(context_ptr);
++        // emplace may flush the pool, whose callback walks the trees of the finished groups
++        std::lock_guard lock(context->tree_mtx);
+         const auto [idx, it, success] =
+             context->groups.emplace(*eDescr, context);
+ 
+@@ -143,6 +146,7 @@ struct Context {
+                                      std::to_string(eDescr->type));
+         }
+ 
++        std::lock_guard lock(context->tree_mtx); // children: see tree_mtx
+         const auto &[it, success] =
+             parent->children.emplace(std::unique_ptr<EventBase>(event));
+ 
+@@ -159,6 +163,10 @@ struct Context {
+     }
+ 
+   public:
++    // guards the event trees (EventBase::children) of this communicator: NCCL calls the profiler from the user
++    // thread and from its proxy thread, which insert children and walk the trees concurrently
++    std::recursive_mutex tree_mtx;
++
+     const char *comm_name;
+     uint64_t comm_hash;
+     int n_nodes;
+diff --git a/ncclsee/v4/events/event.cpp b/ncclsee/v4/events/event.cpp
+index 1754687..32ea6c7 100644
+--- a/ncclsee/v4/events/event.cpp
++++ b/ncclsee/v4/events/event.cpp
+@@ -16,6 +16,16 @@ EventBase::EventBase(const ncclProfilerEventDescr_v4_t &descr, Context *ctx)
+     start = time_point_t::clock::now();
+ }
+ 
++void EventBase::report_parent() const {
++    // NCCL's proxy thread inserts children (KernelCh events) while the user thread stops the collective and walks
++    // the tree here: both under the context's tree mutex (recursive: report_parent recurses to the root)
++    std::lock_guard lock(ctx->tree_mtx);
++    if (parentObj) {
++        return static_cast<EventBase *>(parentObj)->report_parent();
++    }
++    report_children();
++}
++
+ auto Collective::is_complete() const -> bool {
+     // A collective operation should have at least nChannel kernels finished
+     // The rest of the children should also be complete
+diff --git a/ncclsee/v4/events/event.hpp b/ncclsee/v4/events/event.hpp
+index 662dc69..f6ffa10 100644
+--- a/ncclsee/v4/events/event.hpp
++++ b/ncclsee/v4/events/event.hpp
+@@ -124,12 +124,8 @@ struct EventBase : ncclProfilerEventDescr_v4_t {
+             duration(), children_accumulated_time);
+     };
+ 
+-    void report_parent() const {
+-        if (parentObj) {
+-            return static_cast<EventBase *>(parentObj)->report_parent();
+-        }
+-        report_children();
+-    }
++    // walks the whole event tree; holds ctx->tree_mtx, as other threads insert children (event.cpp)
++    void report_parent() const;
+ 
+     void report_children(const int level = 0) const {
+         this->report(level);

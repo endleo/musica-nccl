@@ -34,6 +34,7 @@ import json
 import re
 import tarfile
 import warnings
+from datetime import datetime
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -219,6 +220,27 @@ def load_ncclbench(path):
 # aggregation
 # ---------------------------------------------------------------------------------------------
 
+def run_date(run):
+    """
+    start of a run (`date:` in its first job-info.txt: <run>/job-info.txt with variants, else <run>/<NN>/job-info.txt),
+    None if it has none. Run ids are Slurm job ids (MUSICA) or <machine>-<date> (run-local.sh), so they do not sort
+    by time across machines
+    """
+    for info in [*sorted(Path(run).glob("job-info.txt")), *sorted(Path(run).glob("*/job-info.txt"))]:
+        m = re.search(r"^date: (\S+)", info.read_text(), re.M)
+        if m:
+            return datetime.fromisoformat(m.group(1))
+    return None
+
+
+def newest_run(runs):
+    """the run folder with the latest start (run_date) among `runs`"""
+    dated = [(d, r) for r in runs if r.is_dir() and (d := run_date(r)) is not None]
+    if not dated:
+        raise SystemExit("no runs with a job-info.txt")
+    return max(dated, key=lambda dr: dr[0])[1]
+
+
 def extract_profiler_outputs(run_dir):
     """extracts <run>/profiler-out.tar.gz (once) and returns the extraction directory"""
     run_dir = Path(run_dir)
@@ -358,6 +380,17 @@ def _nccl_tests_calls_per_size_and_rank(path):
     return warmup + 2 * (1 + iters * agg + validation), n_ranks
 
 
+def _job_info_ranks(run_dir):
+    """
+    number of ranks of a run from its job-info.txt (one line "<host> local rank <n>: ..." per rank under "GPUs
+    visible per rank", written by experiment.sh on MUSICA and the Sparks); None if there is none
+    """
+    info = Path(run_dir) / "job-info.txt"
+    if not info.exists():
+        return None
+    return len(re.findall(r"^\S+ local rank \d+:", info.read_text(), re.M)) or None
+
+
 def record_counts(run_dir, profilers=PROFILERS, nccl_tests=NCCL_TESTS, nccl_bench_tests=NCCL_BENCH_TESTS, warmups=5,
                   by_size=False):
     """
@@ -369,7 +402,8 @@ def record_counts(run_dir, profilers=PROFILERS, nccl_tests=NCCL_TESTS, nccl_benc
     reclaimed after its op timeout have no time and count as missed)
     expected: nccl-tests from its output header (see _nccl_tests_calls_per_size_and_rank); ncclbench (--blocking)
     issues `warmups` + one call per csv row and size, on every rank. The number of ranks is taken from the nccl-tests
-    output of the same profiler run (all tests run on the same hosts).
+    output of the same profiler run (all tests run on the same hosts), or, in experiments without nccl-tests
+    (logging), from job-info.txt; not from the profiler records, so a profiler that misses a whole rank shows up.
     """
     run_dir = Path(run_dir)
     root = extract_profiler_outputs(run_dir)
@@ -381,6 +415,11 @@ def record_counts(run_dir, profilers=PROFILERS, nccl_tests=NCCL_TESTS, nccl_benc
             if out_file.exists():
                 n_ranks = _nccl_tests_calls_per_size_and_rank(out_file)[1]
                 break
+        if n_ranks is None and nccl_bench_tests:
+            n_ranks = _job_info_ranks(run_dir)
+            if n_ranks is None:
+                raise SystemExit(f"{run_dir}: number of ranks unknown (no nccl-tests output for {profiler} and no "
+                                 "ranks in job-info.txt), cannot count the expected ncclbench calls")
         for test in list(nccl_tests) + list(nccl_bench_tests):
             is_bench = test in nccl_bench_tests
             operation = _test_operation(test)

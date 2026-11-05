@@ -5,6 +5,7 @@
 # run in one job on the same nodes, in 3 rounds, each round runs every variant once (order rotated per round, see
 # experiment.sh); results in results/tuning/<job>/<round>/<variant>/.
 # Submit from the repository root: sbatch experiments/tuning.sbatch
+# (DGX Sparks, no Slurm: ./run-local.sh experiments/tuning.sbatch)
 #
 # Slurm options as in full.sbatch (MUSICA's comfort mode, see there)
 #SBATCH --job-name=tuning
@@ -15,7 +16,7 @@
 #SBATCH --partition=zen4_0768_h100x4
 #SBATCH --qos=zen4_0768_h100x4
 
-cd "$SLURM_SUBMIT_DIR"
+cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"  # without Slurm: run-local.sh
 source ./experiment.sh
 
 EXPERIMENT=tuning
