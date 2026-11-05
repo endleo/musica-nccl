@@ -39,8 +39,8 @@ report/               summaries (Typst), one folder per experiment
 analysis/
   analyze_full.py     profiler experiment (full, also quick): plots and tables of a run (the evaluation cells of
                       the Chameleon notebook)
-  analyze_tuning.py   tuning experiment, MUSICA only for now (choices per variant, cost model, rounds, pinned vs.
-                      default)
+  analyze_tuning.py   tuning experiment, with a logging run of the same setup (choices per variant, cost model,
+                      rounds, pinned vs. default)
   analyze_logging.py  logging experiment: stub, no analysis yet
   common.py           shared by the analyze_*.py scripts (results folder, command line, choice of the run)
   profiler_results.py parsing of benchmark and profiler outputs (copied from the Chameleon project)
@@ -80,7 +80,8 @@ Locally:
 ```sh
 ./fetch.sh                  # default remote musica:musica-nccl (ssh config entry "musica")
 uv run analysis/analyze_full.py     # newest run in results/full/, or: ... analyze_full.py results/full/<job>
-uv run analysis/analyze_tuning.py   # newest run in results/tuning/ (the same with a run folder)
+uv run analysis/analyze_tuning.py   # newest run in results/tuning/, with the newest logging run that fits it
+                                    # (or: ... analyze_tuning.py results/tuning/<job> --logging results/logging/<job>)
 uv run analysis/analyze_logging.py  # stub, no analysis yet
 uv run pytest                       # tests of the analysis scripts (about 1 min; -m "not slow": a few seconds)
 typst compile --root . report/<experiment>/summary.typ    # summary with the figures of the run (see below)
@@ -191,8 +192,8 @@ Short summaries to send around, one per experiment, compiled from the repository
 run; `--input run=results/<experiment>/<job>` for another run) writes `report/profilers/summary.pdf`;
 `report/logging/summary.typ` (run 1889653) has no figures, its numbers are taken from the logs;
 `report/tuning/summary.typ` (run 1893400) reads its figures from `results/tuning/<job>/`, so run
-`analyze_tuning.py` on the tuning run first (it also needs the logging run 1889653 in `results/`, for NCCL's cost
-table).
+`analyze_tuning.py` on the tuning run first (it also needs a logging run of the same setup in `results/`, for
+NCCL's cost table; for 1893400 that is 1889653).
 
 There is one analysis script per experiment, `analysis/analyze_<experiment>.py`; without an argument it analyzes
 the newest run of its experiment (by the date in `job-info.txt`), otherwise the run folder given. It refuses runs of
@@ -213,14 +214,26 @@ writes `violins.pdf` per iteration and per run:
   against the spread within an iteration
 - `reported_times.txt`: mean times per size, as the tables in the Chameleon notebook
 
-`analyze_tuning.py` (tuning runs, `results/tuning/<job>/<round>/<variant>/`; MUSICA only for now) extracts the
-profiler outputs of every variant and writes into the run folder (ncclbench times, all rounds together unless
-stated). Before that, it checks the run against what it assumes (MUSICA, NCCL 2.27.7, 2 nodes x 4
-H100, the 3 rounds and 7 variants of `tuning.sbatch`, 8 channels, logging run 1889653) and aborts with the list of
-mismatches if anything differs. It writes:
+`analyze_tuning.py` (tuning runs, `results/tuning/<job>/<round>/<variant>/`) needs a logging run as well: NCCL's
+TUNING table in its log is the input of the cost model, and its choices are compared with the tuning run's. By
+default it takes the newest logging run that fits the tuning run, `--logging results/logging/<job>` names one.
+Before anything is written it checks, and aborts with the list of problems:
+
+- that the logging run has the same setup as the tuning run: machine, NCCL version, nodes and GPUs per node, ranks
+  per node, the `NCCL_*` variables of the job (not logging and paths); the nodes themselves may differ
+- that the NCCL version has a cost model (`COST_MODELS` in `analyze_tuning.py`: so far 2.27.7; the model is NCCL's
+  `ncclTopoGetAlgoTime`, so another version needs its source checked and an entry there)
+- the tuning run: the 7 variants of `tuning.sbatch`, at least 2 rounds with all variants, ncclbench with
+  `--blocking` and the sizes of `model_violins.pdf`
+- after loading: the communicator the model uses besides the TUNING table (ranks, nodes, channels from the logging
+  run's NCCL log, compute capability from its topology dump) against the ranks and channels `ncclsee` recorded in
+  the tuning run, and that the table offers the combinations the variants pin
+
+It extracts the profiler outputs of every variant and writes into the run folder (ncclbench times, all rounds
+together unless stated):
 
 - `choices.txt`: algorithm, protocol, channels and warps `ncclsee` recorded per variant and size, checked against
-  what was pinned; NCCL's choice compared with the logging run 1889653 and with the cost model
+  what was pinned; NCCL's choice compared with the logging run and with the cost model
 - `model_vs_measured.txt`, `model_vs_measured.pdf`, `model_violins.pdf`: NCCL's estimate per combination (cost
   model with the TUNING table of the logging run) against the measured distribution
 - `round_consistency.pdf`: per variant, how far each round's median is from the median over the rounds
@@ -233,9 +246,10 @@ mismatches if anything differs. It writes:
 
 - `test_cli.py`, `test_tuning_checks.py` (a few seconds, no data needed): the scripts refuse runs of other
   experiments, missing folders and folders without `job-info.txt`, and take the newest run of their experiment by
-  default; `analyze_tuning.py` aborts, before writing anything, on every mismatch with what it assumes (machine,
-  NCCL, GPUs, rounds, variants, ncclbench settings, missing outputs, the logging run, the communicator). These run
-  on fake runs (a `job-info.txt` and empty files).
+  default; `analyze_tuning.py` accepts other setups (nodes, GPUs, machine, rounds) when the logging run has the
+  same, picks the newest logging run that fits, and aborts, before writing anything, on every problem (unknown NCCL
+  version, differences between the runs, variants, ncclbench settings, missing outputs, the communicator); NCCL
+  2.27.7's model time. These run on fake runs (a `job-info.txt` and empty files).
 - `test_regression.py` (marked `slow`, about 1 min in parallel, 3.5 min with `-n0`): each script on a copy of
   existing runs (`full/1863257`, `full/1874191`, both Spark full runs, `quick/1863239`, `tuning/1893400` with
   `logging/1889653`). Its outputs must equal `analysis/tests/reference/`: text identical, PDFs identical

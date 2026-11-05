@@ -45,10 +45,11 @@ Open items per experiment (and general ones first), roughly by priority; done it
       "Subnet-aware routing: overriding dev" in the NET log. If it does not work: restrict `NCCL_IB_HCA`, or fall back
       to sockets (`NCCL_IB_DISABLE=1`, then over `NCCL_SOCKET_IFNAME`, which has to reach both neighbors)
 - [ ] CoMMA on the Sparks (rust, libclang, protobuf; skipped in `build.sh` for now)
-- [ ] Tuning analysis for a Spark run: `analyze_tuning.py` has MUSICA's logging run (`LOGGING_RUN`), communicator
-      (`COMM_CHANNELS, COMM_RANKS, COMM_NODES` = 8, 8, 2) and available combinations (`COMBINATIONS`) built in, and
-      its cost model is NCCL 2.27.7's; make them parameters of the run (from a logging run on the Sparks), and check
-      the variants of `tuning.sbatch` against the TUNING table there (3 ranks, one per node; NCCL 2.32)
+- [ ] Tuning analysis for a Spark run: the logging run and the communicator are parameters now, but the Sparks
+      use NCCL 2.32.3, which has no cost model in `analyze_tuning.py` yet: compare its `ncclTopoGetAlgoTime`
+      (`src/graph/tuning.cc`, `treeCorrectionFactor`) and TUNING table format with 2.27.7's and add it to
+      `COST_MODELS`. The variants (`EXPECTED_VARIANTS`) and combinations (`COMBINATIONS`) are still fixed: check
+      them against the TUNING table of the Sparks (3 ranks, one per node; LL128 on sm_121?)
 
 ## Profiler experiment (`full.sbatch`, `quick.sbatch`)
 

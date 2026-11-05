@@ -63,10 +63,11 @@ def outputs(run):
                   if p.is_file() and not p.is_symlink() and "profiler-out-extracted" not in p.relative_to(run).parts)
 
 
-def write_job_info(path, header, variants=None, gpus=None):
+def write_job_info(path, header, variants=None, gpus=None, ranks=None, env=None):
     """
     a job-info.txt as experiment.sh writes it, with only the parts the analysis reads: the "key: value" header,
-    the variant list (tuning) and "GPUs per node" ({host: [GPU names]})
+    the variant list (tuning), "GPUs per node" ({host: [GPU names]}), "GPUs visible per rank" ({host: number of
+    ranks}) and the job environment ({variable: value})
     """
     lines = [f"{k}: {v}" for k, v in header.items()]
     if variants is not None:
@@ -75,7 +76,10 @@ def write_job_info(path, header, variants=None, gpus=None):
         lines += ["", "GPUs per node:"]
         lines += [f"{host}: " + " ".join(f"GPU {i}: {name} (UUID: GPU-{host}-{i})" for i, name in enumerate(names))
                   for host, names in gpus.items()]
-    lines += ["", "environment:", "HOME=/nonexistent"]
+    if ranks is not None:
+        lines += ["", "GPUs visible per rank (CUDA_VISIBLE_DEVICES, nvidia-smi):"]
+        lines += [f"{host} local rank {r}: 0, 1 GPUs" for host, n in ranks.items() for r in range(n)]
+    lines += ["", "environment:", "HOME=/nonexistent", *(f"{k}={v}" for k, v in (env or {}).items())]
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n")

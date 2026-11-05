@@ -41,22 +41,36 @@ def run_experiment(run):
     return None
 
 
-def run_from_args(doc, experiment, accepted=None):
-    """
-    the run folder to analyze: the command line argument, default the newest run in results/<experiment>/. Exits if
-    the run's experiment is not one of `accepted` (default: only `experiment`)
-    """
+def run_parser(doc, experiment):
+    """command line parser with the optional run folder (add a script's own options to it)"""
     parser = argparse.ArgumentParser(description=doc, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("run", nargs="?", type=Path, help=f"run folder (default: newest in results/{experiment}/)")
-    args = parser.parse_args()
-    run = args.run or pr.newest_run((RESULTS / experiment).glob("*"))
+    return parser
+
+
+def choose_run(run, experiment, accepted=None, option=None):
+    """
+    `run`, or by default the newest run in results/<experiment>/. Exits if the run's experiment is not one of
+    `accepted` (default: only `experiment`); `option`: the command line option that named the run, for the message
+    """
+    run = run or pr.newest_run((RESULTS / experiment).glob("*"))
     if not run.is_dir():
         raise SystemExit(f"{run}: no such run folder")
     found, accepted = run_experiment(run), accepted or [experiment]
     if found is None:
         raise SystemExit(f"{run}: no job-info.txt with the experiment, not a run folder?")
     if found not in accepted:
+        if option:
+            raise SystemExit(f"{run}: a {found} run, {option} takes {' or '.join(accepted)} runs")
         script = SCRIPTS.get(found)
         hint = f", use analysis/{script}" if script else ""
         raise SystemExit(f"{run}: a {found} run, this script analyzes {' and '.join(accepted)} runs{hint}")
     return run
+
+
+def run_from_args(doc, experiment, accepted=None):
+    """
+    the run folder to analyze: the command line argument, default the newest run in results/<experiment>/. Exits if
+    the run's experiment is not one of `accepted` (default: only `experiment`)
+    """
+    return choose_run(run_parser(doc, experiment).parse_args().run, experiment, accepted)

@@ -1,9 +1,15 @@
 """Tuning experiment (experiments/tuning.sbatch): NCCL's own choice vs. pinned algorithm/protocol.
-For now MUSICA only: the logging run (LOGGING_RUN), the communicator (COMM_*), the available combinations
-(COMBINATIONS) and NCCL 2.27.7's cost model are built in. Before evaluating, check_run_info and check_communicator
-compare the run with these assumptions (EXPECTED_*, COMM_*, COMBINATIONS) and abort with the list of mismatches.
 
-    uv run analysis/analyze_tuning.py [results/tuning/<job>]     default: newest run in results/tuning/
+    uv run analysis/analyze_tuning.py [results/tuning/<job>] [--logging results/logging/<job>]
+
+Default: the newest tuning run, and the newest logging run that matches it. The logging run provides NCCL's TUNING
+table (latency and bandwidth per algorithm/protocol, the input of the cost model) and NCCL's choices with logging,
+so it has to have the same setup as the tuning run: machine, NCCL version, nodes, GPUs and ranks per node, and the
+NCCL_* variables of the job (check_run_info; the nodes themselves may differ). The cost model is NCCL's source code
+redone in Python, so only NCCL versions with an entry in COST_MODELS are accepted. The communicator the model needs
+besides the table (ranks, nodes, channels, compute capability) is read from the logging run's NCCL log and topology
+dump (logging_communicator) and checked against the tuning run's ncclsee records (check_communicator). On any
+mismatch the analysis aborts with the list of them, before writing anything.
 
 Layout of a run: <run>/<round>/<variant>/ with the ncclbench outputs and profiler-out.tar.gz (ncclsee) of one variant,
 <run>/job-info.txt for the whole job. Every variant runs AllReduce and Broadcast; the tree_* variants only pin
@@ -23,13 +29,16 @@ Writes into the run folder:
     best_vs_default.txt       per size: NCCL's choice, the fastest measured combination and the difference
 
 Statistics as in analyze_full.py: ncclbench's per-call times (max over ranks), warm-ups dropped; medians and quartiles
-over the 50 iterations of each of the 3 rounds together (150 calls per size and variant) unless stated otherwise.
+over the iterations of all rounds together (e.g. 3 rounds x 50 iterations = 150 calls per size and variant) unless
+stated otherwise.
 """
 
 import re
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
-from common import RESULTS, label, run_from_args  # before pyplot: sets matplotlib's backend
+from common import RESULTS, choose_run, label, run_parser  # before pyplot: sets matplotlib's backend
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -40,15 +49,13 @@ from matplotlib.patches import Patch
 
 import profiler_results as pr
 
-# the logging run whose TUNING table (latency/bandwidth per combination) and choices the tuning run is compared with
-LOGGING_RUN = RESULTS / "logging" / "1889653" / "01"
-
 TESTS = {"all_reduce_bench": "all_reduce", "broadcast_bench": "broadcast"}
 ALGOS = ["tree", "ring"]
 PROTOS = ["ll", "ll128", "simple"]
 PROTO_LABELS = {"ll": "LL", "ll128": "LL128", "simple": "Simple"}
 ALGO_LABELS = {"tree": "Tree", "ring": "Ring"}
-# combinations available per operation on MUSICA (TUNING table of the logging run, everything else 0)
+# combinations per operation that the variants pin and the analysis compares (Broadcast only has Ring); the TUNING
+# table of the logging run has to offer exactly these (check_communicator)
 COMBINATIONS = {"all_reduce": [(a, p) for a in ALGOS for p in PROTOS], "broadcast": [("ring", p) for p in PROTOS]}
 
 # protocol = color (checked with the dataviz validator: CVD and normal-vision separation, contrast on white),
@@ -60,19 +67,18 @@ DEFAULT_COLOR = "black"
 ROUND_COLORS = pr.ITERATION_COLORS
 ROUND_MARKERS = pr.ITERATION_MARKERS
 
-# sizes of model_violins.pdf: small (latency-bound), the switch points of the model, large (bandwidth-bound)
+# sizes of model_violins.pdf: small (latency-bound), the switch points of the model on MUSICA with 2 nodes, large
+# (bandwidth-bound)
 VIOLIN_SIZES = {"all_reduce": [8, 2**16, 2**20, 2**21, 2**26, 2**30], "broadcast": [8, 2**16, 2**19, 2**20, 2**26, 2**30]}
 
 
 # ---------------------------------------------------------------------------------------------
-# what this module assumes about the run (check_run_info, check_communicator: abort if the run differs)
+# what this module assumes about the runs (check_run_info, check_communicator: abort if a run differs)
 # ---------------------------------------------------------------------------------------------
 
-EXPECTED_MACHINE = "musica"
-EXPECTED_NCCL = "2.27.7"   # the cost model below (model_time, TREE_CORRECTION) is NCCL 2.27.7's
-EXPECTED_GPU = "NVIDIA H100"  # compute capability 90: Ring/Simple latency factor 1.4 in model_time
-EXPECTED_NODES, EXPECTED_RANKS_PER_NODE = 2, 4
-EXPECTED_ROUNDS = 3        # the texts and titles say "3 rounds", best_vs_default.txt "n/3"
+# job-info.txt without a machine line: from before run-local.sh, when MUSICA was the only machine
+LEGACY_MACHINE = "musica"
+MIN_ROUNDS = 2  # round_consistency.pdf and the noise floor (best_vs_default.txt) compare the rounds
 # variants of experiments/tuning.sbatch: pinned_combination reads the pinned combination from the name
 EXPECTED_VARIANTS = {
     "default": "(job environment)",
@@ -83,20 +89,26 @@ EXPECTED_VARIANTS = {
     "ring_ll128": "NCCL_ALGO=allreduce:ring NCCL_PROTO=allreduce:LL128;broadcast:LL128",
     "ring_simple": "NCCL_ALGO=allreduce:ring NCCL_PROTO=allreduce:Simple;broadcast:Simple",
 }
+# NCCL_* variables of the job environment that do not change NCCL's tuning: they may differ between the runs
+IGNORED_NCCL_ENV = {"NCCL_HOME", "NCCL_DEBUG", "NCCL_DEBUG_SUBSYS", "NCCL_DEBUG_FILE", "NCCL_TOPO_DUMP_FILE",
+                    "NCCL_GRAPH_DUMP_FILE"}
 
 
 def job_info(path):
     """
-    the header of a job-info.txt: {"key": value} of the "key: value" lines, "gpus": {host: [GPU names]} and
-    "variants": {name: environment}. Without a machine line (job-info.txt from before run-local.sh), the run is from
-    MUSICA, the only machine then
+    the header of a job-info.txt: {"key": value} of the "key: value" lines, "gpus": {host: [GPU names]},
+    "ranks": {host: number of ranks} (GPUs visible per rank), "variants": {name: environment} and "nccl_env":
+    {variable: value} of the NCCL_* variables of the job environment (without IGNORED_NCCL_ENV)
     """
     lines = Path(path).read_text().splitlines()
-    info, gpus, variants, section = {}, {}, {}, None
+    info, gpus, ranks, variants, nccl_env, section = {}, {}, Counter(), {}, {}, None
     for line in lines:
-        if line == "environment:":
-            break
-        if not line.strip():
+        if section == "environment":
+            if (m := re.match(r"(NCCL_\w+)=(.*)", line)) and m.group(1) not in IGNORED_NCCL_ENV:
+                nccl_env[m.group(1)] = m.group(2)
+        elif line == "environment:":
+            section = "environment"
+        elif not line.strip():
             section = None
         elif line.startswith(" "):  # indented: an entry of the section above
             if section == "variants":
@@ -107,51 +119,102 @@ def job_info(path):
         elif section == "GPUs per node":  # entries not indented: "<host>: GPU 0: ... GPU 1: ..."
             host, _, rest = line.partition(": ")
             gpus[host] = re.findall(r"GPU \d+: (.*?) \(UUID", rest)
+        elif section is not None and section.startswith("GPUs visible per rank"):  # "<host> local rank <n>: ..."
+            if m := re.match(r"(\S+) local rank \d+:", line):
+                ranks[m.group(1)] += 1
         elif section is None or section == "variants":  # the variant list ends without a blank line
             section = None
             if m := re.match(r"([\w -]+): (.*)", line):
                 info[m.group(1)] = m.group(2)
-    info.setdefault("machine", EXPECTED_MACHINE if "job" in info else "unknown")
-    return {**info, "gpus": gpus, "variants": variants}
+    info.setdefault("machine", LEGACY_MACHINE if "job" in info else "unknown")
+    return {**info, "gpus": gpus, "ranks": dict(ranks), "variants": variants, "nccl_env": nccl_env}
 
 
-def _check_machine(info, what):
-    """problems of one job-info (tuning or logging run) against the machine this module is written for"""
+def nccl_version(info):
+    """NCCL version of a run: "2.27.7" of "NCCL: 2.27.7 (<path>)" (the library the benchmarks loaded)"""
+    return info.get("NCCL", "").split(" ")[0]
+
+
+def gpu_layout(info):
+    """nodes and their GPUs, comparable between runs: "8 node(s) with 4 x NVIDIA H100\""""
+    per_node = Counter(f"{len(names)} x {'/'.join(sorted(set(names))) or 'no GPU'}" for names in info["gpus"].values())
+    return ", ".join(f"{n} node(s) with {k}" for k, n in sorted(per_node.items())) or "no GPUs per node"
+
+
+def rank_layout(info):
+    """ranks per node, comparable between runs: "8 node(s) with 4 rank(s)\""""
+    per_node = Counter(info["ranks"].values())
+    return ", ".join(f"{n} node(s) with {k} rank(s)" for k, n in sorted(per_node.items())) or "no ranks"
+
+
+def run_problems(info, what):
+    """problems of one run (tuning or logging) for this module: unknown NCCL version, GPUs and ranks unknown"""
     problems = []
-    if info["machine"] != EXPECTED_MACHINE:
-        problems.append(f"{what}: machine {info['machine']}, expected {EXPECTED_MACHINE}")
-    nccl = info.get("NCCL", "").split(" ")[0]
-    if nccl != EXPECTED_NCCL:
-        problems.append(f"{what}: NCCL {nccl or '(not in job-info.txt)'}, expected {EXPECTED_NCCL}")
-    gpus = info["gpus"]
-    if len(gpus) != EXPECTED_NODES:
-        problems.append(f"{what}: {len(gpus)} node(s) ({' '.join(gpus)}), expected {EXPECTED_NODES}")
-    for host, names in gpus.items():
-        if len(names) != EXPECTED_RANKS_PER_NODE or set(names) != {EXPECTED_GPU}:
-            problems.append(f"{what}: {host} has {len(names)} GPU(s) {sorted(set(names))}, expected "
-                            f"{EXPECTED_RANKS_PER_NODE} x {EXPECTED_GPU}")
-    ranks = EXPECTED_NODES * EXPECTED_RANKS_PER_NODE
-    if (m := re.match(r"(\d+) ", info.get("tasks", ""))) and int(m.group(1)) != ranks:
-        problems.append(f"{what}: {m.group(1)} tasks, expected {ranks}")
+    nccl = nccl_version(info)
+    if nccl not in COST_MODELS:
+        problems.append(f"{what}: NCCL {nccl or '(not in job-info.txt)'}, the cost model is only implemented for "
+                        f"NCCL {', '.join(COST_MODELS)} (COST_MODELS)")
+    if not info["gpus"]:
+        problems.append(f"{what}: no GPUs per node in job-info.txt")
+    if len(types := {n for names in info["gpus"].values() for n in names}) > 1:
+        problems.append(f"{what}: GPUs of different types {sorted(types)} (the compute capability of the cost "
+                        "model is read from rank 0's node)")
+    if not info["ranks"]:
+        problems.append(f"{what}: no ranks in job-info.txt (GPUs visible per rank)")
     return problems
 
 
+def match_problems(tuning_info, logging_info, what):
+    """differences between the tuning and the logging run after which the logging run's TUNING table does not apply"""
+    t, l = tuning_info, logging_info
+    pairs = [("machine", t["machine"], l["machine"]), ("NCCL", nccl_version(t), nccl_version(l)),
+             ("GPUs", gpu_layout(t), gpu_layout(l)), ("ranks", rank_layout(t), rank_layout(l)),
+             ("NCCL environment", t["nccl_env"], l["nccl_env"])]
+    return [f"{what}: {name} {lv}, tuning run {tv}" for name, tv, lv in pairs if tv != lv]
+
+
+def logging_iteration(logging_run):
+    """the iteration folder of a logging run with the logs (the first one with a job-info.txt), None if none"""
+    return next((d for d in sorted(Path(logging_run).glob("[0-9]*")) if (d / "job-info.txt").exists()), None)
+
+
+def logging_problems(logging_run, tuning_info):
+    """problems of a logging run as the source of the TUNING table for a tuning run (job-info.txt only)"""
+    what = f"logging run {Path(logging_run).name}"
+    if (d := logging_iteration(logging_run)) is None:
+        return [f"{what}: no iteration folder with a job-info.txt in {logging_run}"]
+    info = job_info(d / "job-info.txt")
+    problems = []
+    if info.get("experiment") != "logging":
+        problems.append(f"{what}: experiment {info.get('experiment')}, expected logging")
+    if info.get("NCCL logging") != "true":
+        problems.append(f"{what}: without NCCL logging (no TUNING table)")
+    if not (d / "profiler-out.tar.gz").exists():
+        problems.append(f"{what}: no profiler-out.tar.gz in {d.name}/ (NCCL's logs)")
+    return problems + run_problems(info, what) + match_problems(tuning_info, info, what)
+
+
 def _abort(run, problems):
-    raise SystemExit(f"{run}: the run does not match what {Path(__file__).name} assumes (it is written for the "
-                     f"MUSICA tuning run 1893400), aborting:\n" + "\n".join(f"  - {p}" for p in problems))
+    raise SystemExit(f"{run}: the run does not fit what {Path(__file__).name} supports, aborting:\n"
+                     + "\n".join(f"  - {p}" for p in problems))
 
 
-def check_run_info(run, logging_run=LOGGING_RUN):
-    """job-info.txt of the tuning run and of the logging run against the assumptions above; aborts on a mismatch"""
+def check_run_info(run, logging_run):
+    """
+    job-info.txt and layout of the tuning run, and the logging run against it (logging_problems); aborts with all
+    problems
+    """
     run, problems = Path(run), []
     if not (run / "job-info.txt").exists():
         _abort(run, [f"no job-info.txt in {run} (a tuning run has it in its top folder)"])
     info = job_info(run / "job-info.txt")
-    problems += _check_machine(info, "tuning run")
+    problems += run_problems(info, "tuning run")
     if info.get("experiment") != "tuning":
         problems.append(f"tuning run: experiment {info.get('experiment')}, expected tuning")
-    if info.get("rounds") != str(EXPECTED_ROUNDS):
-        problems.append(f"tuning run: rounds {info.get('rounds', '(not in job-info.txt)')}, expected {EXPECTED_ROUNDS}")
+    rounds = int(info["rounds"]) if info.get("rounds", "").isdigit() else None
+    if rounds is None or rounds < MIN_ROUNDS:
+        problems.append(f"tuning run: rounds {info.get('rounds', '(not in job-info.txt)')}, expected at least "
+                        f"{MIN_ROUNDS} (MIN_ROUNDS)")
     variants = info["variants"]
     if missing := [v for v in EXPECTED_VARIANTS if v not in variants]:
         problems.append(f"tuning run: variants {missing} missing (experiments/tuning.sbatch)")
@@ -174,7 +237,7 @@ def check_run_info(run, logging_run=LOGGING_RUN):
             problems.append(f"tuning run: sizes {missing} of model_violins.pdf ({op}) not measured")
     # every round has every variant, each with both tests' output
     found = {(r, v) for r, v, _ in variant_dirs(run)}
-    expected = {(f"{r:02d}", v) for r in range(1, EXPECTED_ROUNDS + 1) for v in EXPECTED_VARIANTS}
+    expected = {(f"{r:02d}", v) for r in range(1, (rounds or 0) + 1) for v in EXPECTED_VARIANTS}
     if missing := sorted(expected - found):
         problems.append(f"tuning run: (round, variant) without profiler output: {missing}")
     if extra := sorted(found - expected):
@@ -184,37 +247,85 @@ def check_run_info(run, logging_run=LOGGING_RUN):
             if not (d / f"{test}_ncclsee.out").exists():
                 problems.append(f"tuning run: {d.relative_to(run)}/{test}_ncclsee.out missing")
 
-    # the logging run: source of the cost table and of the reference choices
-    if not (logging_run / "job-info.txt").exists():
-        problems.append(f"logging run {logging_run} not found (needed for NCCL's cost table)")
+    # the logging run: source of the TUNING table and of the reference choices
+    if not Path(logging_run).is_dir():
+        problems.append(f"logging run {logging_run} not found (needed for NCCL's TUNING table)")
     else:
-        linfo = job_info(logging_run / "job-info.txt")
-        problems += _check_machine(linfo, f"logging run {logging_run.parent.name}")
-        if linfo.get("NCCL logging") != "true":
-            problems.append(f"logging run {logging_run.parent.name}: without NCCL logging (no TUNING table)")
+        problems += logging_problems(logging_run, info)
     if problems:
         _abort(run, problems)
 
 
-def check_communicator(run, choices, table):
+def matching_logging_run(run, results=None):
+    """the newest logging run in results/logging/ that fits the tuning run (logging_problems); aborts if none does"""
+    info = job_info(Path(run) / "job-info.txt")
+    candidates = [r for r in (Path(results or RESULTS) / "logging").glob("*") if r.is_dir()]
+    candidates.sort(key=lambda r: (pr.run_date(r) is not None, pr.run_date(r) or 0), reverse=True)
+    rejected = []
+    for candidate in candidates:
+        if not (problems := logging_problems(candidate, info)):
+            return candidate
+        rejected.append(f"{candidate.name}: {problems[0]}" + (f" (+{len(problems) - 1} more)" if len(problems) > 1
+                                                                else ""))
+    _abort(run, [f"no logging run in {Path(results or RESULTS) / 'logging'} fits the tuning run (same machine, NCCL, "
+                 "GPUs and ranks per node, NCCL environment; --logging to name one)", *rejected])
+
+
+@dataclass(frozen=True)
+class Communicator:
+    """what NCCL's cost model uses besides the TUNING table (ncclComm: nRanks, nNodes, nChannels, minCompCap)"""
+    ranks: int
+    nodes: int
+    channels: int
+    min_comp_cap: int
+
+
+def logging_communicator(logging_dir):
     """
-    what NCCL actually used (ncclsee records) and offered (TUNING table of the logging run) against COMM_* and
-    COMBINATIONS; aborts on a mismatch
+    the communicator of the logging run's AllReduce test: ranks and nodes from rank 0's NCCL log ("comm ... nRanks
+    <n> nNodes <n>"), channels from its ring setup ("Channel 00/<n>"), compute capability from its topology dump
+    (sm of the GPUs of rank 0's node; one GPU type per run, see run_problems); aborts if something is missing
+    """
+    root = pr.extract_profiler_outputs(logging_dir) / "profiler-out" / "ncclsee" / "all_reduce_bench"
+    log, topo = next(root.glob("*/nccl-rank0.log"), None), next(root.glob("*/topo-rank0.xml"), None)
+    text = log.read_text() if log else ""
+    comm = re.search(r"NCCL INFO comm \S+ rank 0 nRanks (\d+) nNodes (\d+)", text)
+    channels = re.search(r"NCCL INFO Channel \d+/(\d+) :", text)
+    sms = [int(s) for s in re.findall(r'<gpu [^>]*\bsm="(\d+)"', topo.read_text())] if topo else []
+    problems = [p for p, ok in [
+        (f"logging run: no nccl-rank0.log in {root}", log),
+        ("logging run: no 'comm ... nRanks <n> nNodes <n>' line in nccl-rank0.log", comm or not log),
+        ("logging run: no 'Channel <i>/<n>' line in nccl-rank0.log", channels or not log),
+        (f"logging run: no topo-rank0.xml with the GPUs' compute capability (sm) in {root}", sms)] if not ok]
+    if problems:
+        _abort(logging_dir, problems)
+    return Communicator(ranks=int(comm.group(1)), nodes=int(comm.group(2)), channels=int(channels.group(1)),
+                        min_comp_cap=min(sms))
+
+
+def check_communicator(run, choices, table, comm, nodes):
+    """
+    what NCCL actually used in the tuning run (ncclsee records) against the communicator of the logging run and its
+    `nodes` (job-info.txt), and what the TUNING table of the logging run offers against COMBINATIONS; aborts on a
+    mismatch
     """
     problems = []
+    if comm.nodes != nodes:
+        problems.append(f"logging run: NCCL's communicator has {comm.nodes} node(s), the tuning run {nodes}")
     ranks = sorted(int(r) for r in choices["rank"].unique())
-    if ranks != list(range(COMM_RANKS)):
-        problems.append(f"ncclsee recorded ranks {ranks}, expected 0 - {COMM_RANKS - 1} (COMM_RANKS)")
+    if ranks != list(range(comm.ranks)):
+        problems.append(f"ncclsee recorded ranks {ranks}, expected 0 - {comm.ranks - 1} (the logging run's "
+                        "communicator)")
     # NCCL's own choice uses up to all channels of the communicator
     channels = choices.loc[choices["variant"] == "default", "channels"].max()
-    if channels != COMM_CHANNELS:
-        problems.append(f"at most {channels} channels in the default variant, expected {COMM_CHANNELS} (COMM_CHANNELS)")
+    if channels != comm.channels:
+        problems.append(f"at most {channels} channels in the default variant, expected {comm.channels} (the logging "
+                        "run's communicator)")
     available = {op: sorted((a, p) for o, a, p in table if o == op) for op in TESTS.values()}
     if available != {op: sorted(c) for op, c in COMBINATIONS.items()}:
         problems.append(f"TUNING table of the logging run offers {available}, expected COMBINATIONS {COMBINATIONS}")
     if problems:
         _abort(run, problems)
-
 
 def variant_name(algo, proto):
     return f"{algo}_{proto}"
@@ -301,31 +412,24 @@ def load_choices(run):
     return pd.concat(frames, ignore_index=True)
 
 
-def logging_choices(logging_run=LOGGING_RUN):
-    root = pr.extract_profiler_outputs(logging_run) / "profiler-out" / "ncclsee"
+def logging_choices(logging_dir):
+    """ncclsee's records of what NCCL did in the logging run (iteration folder), per test"""
+    root = pr.extract_profiler_outputs(logging_dir) / "profiler-out" / "ncclsee"
     return pd.concat([ncclsee_calls(root / test).assign(test=test) for test in TESTS], ignore_index=True)
 
 
 # ---------------------------------------------------------------------------------------------
-# NCCL's cost model (NCCL 2.27.7, src/graph/tuning.cc, ncclTopoGetAlgoTime; see report/logging/summary.typ)
+# NCCL's cost model: the TUNING table of the logging run (latency and bandwidth per combination, computed by NCCL for
+# the communicator) and ncclTopoGetAlgoTime of NCCL's src/graph/tuning.cc, redone per NCCL version (COST_MODELS)
 # ---------------------------------------------------------------------------------------------
 
-# treeCorrectionFactor[protocol][log2(bytes / 64)], protocols LL, LL128, Simple
-TREE_CORRECTION = {
-    "ll":     [1.0, 1.0, 1.0, 1.0, .9, .8, .7, .7, .7, .7, .6, .5, .4, .4, .5, .6, .7, .8, .9, 1.0, 1.0, 1.0, 1.0],
-    "ll128":  [1.0, 1.0, 1.0, 1.0, 1.0, .9, .8, .8, .8, .7, .6, .6, .6, .6, .6, .6, .8, .9, .9, .9, .9, 1.0, 1.0],
-    "simple": [.9, .9, .9, .9, .9, .9, .9, .8, .7, .6, .6, .5, .5, .5, .5, .6, .7, .8, .7, .7, .8, .9, .9],
-}
-# communicator of the runs (logging run: 8 channels, 8 ranks on 2 nodes, H100 = compute capability 90)
-COMM_CHANNELS, COMM_RANKS, COMM_NODES = 8, 8, 2
-
-
-def model_table(logging_run=LOGGING_RUN):
+def model_table(logging_dir):
     """
     {(operation, algo, proto): (latency [us], bandwidth [GB/s])} from the TUNING table in rank 0's log of the
-    logging run (first block: Tree, Ring, CollNetDirect, each LL/LL128/Simple; printed with one decimal)
+    logging run (iteration folder; first block: Tree, Ring, CollNetDirect, each LL/LL128/Simple; printed with one
+    decimal). Format of NCCL 2.27.7
     """
-    log = next((pr.extract_profiler_outputs(logging_run) / "profiler-out" / "ncclsee" / "all_reduce_bench")
+    log = next((pr.extract_profiler_outputs(logging_dir) / "profiler-out" / "ncclsee" / "all_reduce_bench")
                .glob("*/nccl-rank0.log"))
     table = {}
     for line in log.read_text().splitlines():
@@ -340,23 +444,52 @@ def model_table(logging_run=LOGGING_RUN):
     return table
 
 
-def model_time(table, operation, algo, proto, nbytes):
-    """NCCL's estimated time [us] of one call (numPipeOps = 1, as in ncclbench --blocking); NaN if not available"""
+# NCCL 2.27.7: treeCorrectionFactor[protocol][log2(bytes / 64)], protocols LL, LL128, Simple
+TREE_CORRECTION_2_27_7 = {
+    "ll":     [1.0, 1.0, 1.0, 1.0, .9, .8, .7, .7, .7, .7, .6, .5, .4, .4, .5, .6, .7, .8, .9, 1.0, 1.0, 1.0, 1.0],
+    "ll128":  [1.0, 1.0, 1.0, 1.0, 1.0, .9, .8, .8, .8, .7, .6, .6, .6, .6, .6, .6, .8, .9, .9, .9, .9, 1.0, 1.0],
+    "simple": [.9, .9, .9, .9, .9, .9, .9, .8, .7, .6, .6, .5, .5, .5, .5, .6, .7, .8, .7, .7, .8, .9, .9],
+}
+
+
+def model_time_2_27_7(table, comm, operation, algo, proto, nbytes):
+    """
+    NCCL 2.27.7's estimated time [us] of one call (ncclTopoGetAlgoTime with numPipeOps = 1, as in ncclbench
+    --blocking; see report/logging/summary.typ); NaN if the combination is not available
+    """
     if (operation, algo, proto) not in table:
         return np.nan
     lat, bw = table[(operation, algo, proto)]
     log_size = int(np.floor(np.log2(nbytes >> 6))) if nbytes >> 6 > 0 else -1
     if algo == "tree" and operation == "all_reduce" and 0 <= log_size < 23:
-        bw *= TREE_CORRECTION[proto][log_size]
-    if (algo == "ring" and proto == "simple" and COMM_NODES > 1 and operation == "all_reduce"
-            and nbytes / (COMM_CHANNELS * COMM_RANKS) >= 64):
-        lat *= 1.4  # "plateau effect of ring" (1.9 below compute capability 8.0)
+        bw *= TREE_CORRECTION_2_27_7[proto][log_size]
+    if (algo == "ring" and proto == "simple" and comm.nodes > 1 and operation == "all_reduce"
+            and nbytes / (comm.channels * comm.ranks) >= 64):
+        lat *= 1.9 if comm.min_comp_cap < 80 else 1.4  # "plateau effect of ring"
     return lat + nbytes / (1000 * bw)
 
 
-def model_estimates(table, sizes):
+# NCCL versions with a cost model here (job-info.txt's "NCCL:" version -> time of one call); runs with other
+# versions are refused (run_problems). Another version: compare its ncclTopoGetAlgoTime (src/graph/tuning.cc,
+# treeCorrectionFactor) and the format of its TUNING table (model_table) with 2.27.7's; add it here with
+# model_time_2_27_7 if they are the same, else with a function of its own
+COST_MODELS = {"2.27.7": model_time_2_27_7}
+
+
+@dataclass(frozen=True)
+class CostModel:
+    """NCCL's cost model for the tuning run: version, TUNING table and communicator of the logging run"""
+    nccl: str
+    table: dict
+    comm: Communicator
+
+    def time(self, operation, algo, proto, nbytes):
+        return COST_MODELS[self.nccl](self.table, self.comm, operation, algo, proto, nbytes)
+
+
+def model_estimates(model, sizes):
     """estimates of every available combination: operation, size_bytes, algo, proto, estimate_us, model_choice"""
-    rows = [{"operation": op, "size_bytes": s, "algo": a, "proto": p, "estimate_us": model_time(table, op, a, p, s)}
+    rows = [{"operation": op, "size_bytes": s, "algo": a, "proto": p, "estimate_us": model.time(op, a, p, s)}
             for op, combos in COMBINATIONS.items() for s in sizes for a, p in combos]
     est = pd.DataFrame(rows)
     best = est.loc[est.groupby(["operation", "size_bytes"])["estimate_us"].idxmin()]
@@ -393,21 +526,22 @@ def _choice_per_size(calls):
         calls=calls.groupby("size_bytes").size())
 
 
-def check_choices(run, choices, estimates):
+def check_choices(run, choices, estimates, comm, logging_dir):
     """text report: every variant used what it pinned; NCCL's choice vs. logging run and model"""
     warmups, iterations = ncclbench_settings(run)
+    calls = comm.ranks * (warmups + iterations)
     text = []
     problems = 0
 
     text.append("Calls recorded by ncclsee per (round, variant, test, size), all ranks; expected "
-                f"{COMM_RANKS} ranks x ({warmups} + {iterations}) = {COMM_RANKS * (warmups + iterations)}")
+                f"{comm.ranks} ranks x ({warmups} + {iterations}) = {calls}")
     counts = choices.groupby(["round", "variant", "test", "size_bytes"]).size()
     text.append(f"  min {counts.min()}, max {counts.max()} over {len(counts)} groups"
-                + ("" if counts.min() == counts.max() == COMM_RANKS * (warmups + iterations) else "  <-- MISMATCH"))
-    problems += counts.min() != COMM_RANKS * (warmups + iterations) or counts.max() != counts.min()
+                + ("" if counts.min() == counts.max() == calls else "  <-- MISMATCH"))
+    problems += counts.min() != calls or counts.max() != counts.min()
     rounds = choices.groupby(["variant", "test", "size_bytes", "algo", "proto", "channels", "warps"])["round"].nunique()
     text.append(f"  rounds per (variant, test, size, algo, proto, channels, warps): {sorted(set(rounds))} "
-                "(3 = the same choice in every round)")
+                f"({choices['round'].nunique()} = the same choice in every round)")
     text.append("")
 
     for test, operation in TESTS.items():
@@ -429,9 +563,9 @@ def check_choices(run, choices, estimates):
             text.append("")
 
     # NCCL's choice: default variant vs. logging run vs. model
-    text.append(f"NCCL's choice (default variant) vs. logging run {LOGGING_RUN.parent.name} (ncclsee records) and "
+    text.append(f"NCCL's choice (default variant) vs. logging run {logging_dir.parent.name} (ncclsee records) and "
                 "the cost model (minimum estimate)")
-    log = logging_choices()
+    log = logging_choices(logging_dir)
     for test, operation in TESTS.items():
         tun = _choice_per_size(choices[(choices["test"] == test) & (choices["variant"] == "default")])
         lg = _choice_per_size(log[log["test"] == test])
@@ -498,10 +632,10 @@ def model_comparison(measured, estimates, choices):
     return out
 
 
-def comparison_text(comp, run):
+def comparison_text(comp, run, model, logging_dir):
     text = [f"NCCL's estimate vs. measured ncclbench time per call [us], {label(run)}, all rounds together",
-            f"estimate: NCCL {EXPECTED_NCCL}'s cost model with the TUNING table of logging run "
-            f"{LOGGING_RUN.parent.name}; pct: share of the "
+            f"estimate: NCCL {model.nccl}'s cost model with the TUNING table of logging run "
+            f"{logging_dir.parent.name}; pct: share of the "
             "measured calls faster than the estimate (0 = the estimate is below every call); est/med: estimate / "
             "measured median; default: NCCL's choice, with the estimate of the combination it used", ""]
     for operation in TESTS.values():
@@ -616,7 +750,7 @@ def plot_model_violins(measured, comp):
             row[0].set_ylabel("Time [µs]")
             for ax in row[len(VIOLIN_SIZES[op]):]:
                 ax.axis("off")
-        handles = [Patch(facecolor="gray", alpha=0.55, edgecolor=pr.EDGE_COLOR, label="measured calls (3 rounds)"),
+        handles = [Patch(facecolor="gray", alpha=0.55, edgecolor=pr.EDGE_COLOR, label=f"measured calls ({measured['round'].nunique()} rounds)"),
                    Line2D([], [], color="black", linewidth=1.5, label="measured median"),
                    Line2D([], [], color="gray", marker="o", markeredgecolor="black", linestyle="none",
                           label="NCCL's estimate"),
@@ -791,8 +925,8 @@ def plot_pinned_vs_default(pvd, noise):
     return fig
 
 
-def best_text(pvd, comp, noise, run):
-    """per size: NCCL's choice and the fastest measured combination (median over all rounds)"""
+def best_text(pvd, comp, noise, run, rounds):
+    """per size: NCCL's choice and the fastest measured combination (median over all `rounds` rounds)"""
     text = [f"NCCL's choice vs. the fastest combination (median over all rounds, us), {label(run)}",
             "ratio: fastest / NCCL's choice; rounds: in how many rounds it was faster (round medians); model rank: "
             "rank of the fastest by NCCL's estimate (1 = NCCL's choice); = : the fastest is NCCL's choice itself",
@@ -813,7 +947,7 @@ def best_text(pvd, comp, noise, run):
             mark = "=" if best["same"] else ("*" if best.name in fast.index else "")
             text.append(f"  {pr.size_label(int(size)):<10}{combination_label(d['used_algo'], d['used_proto']):<13}"
                         f"{d['median_us']:>9.1f}  {combination_label(best['algo'], best['proto']) + ' ' + mark:<14}"
-                        f"{best['median_us']:>9.1f}{best['ratio']:>7.3f}{best['rounds_faster']:>6}/3"
+                        f"{best['median_us']:>9.1f}{best['ratio']:>7.3f}{best['rounds_faster']:>6}/{rounds}"
                         f"{100 * noise.loc[(op, size)]:>7.1f}%{rank:>12}")
         text.append("")
     return "\n".join(text)
@@ -821,24 +955,29 @@ def best_text(pvd, comp, noise, run):
 
 # ---------------------------------------------------------------------------------------------
 
-def analyze(run):
-    run = Path(run)
-    check_run_info(run)
-    print(f"{run}: tuning run, {len(variant_dirs(run))} variant runs (rounds x variants)")
+def analyze(run, logging_run):
+    run, logging_run = Path(run), Path(logging_run)
+    check_run_info(run, logging_run)
+    info = job_info(run / "job-info.txt")
+    logging_dir = logging_iteration(logging_run)
+    print(f"{run}: tuning run, {len(variant_dirs(run))} variant runs (rounds x variants); logging run {logging_run}")
     choices = load_choices(run)
-    table = model_table()
-    check_communicator(run, choices, table)
+    comm = logging_communicator(logging_dir)
+    model = CostModel(nccl=nccl_version(info), table=model_table(logging_dir), comm=comm)
+    print(f"cost model: NCCL {model.nccl}, {comm}")
+    check_communicator(run, choices, model.table, comm, nodes=len(info["gpus"]))
     df = load_times(run)
     bench = benchmark_times(df)
-    estimates = model_estimates(table, sorted(bench["size_bytes"].unique()))
+    rounds = bench["round"].nunique()
+    estimates = model_estimates(model, sorted(bench["size_bytes"].unique()))
 
-    text, problems = check_choices(run, choices, estimates)
+    text, problems = check_choices(run, choices, estimates, comm, logging_dir)
     (run / "choices.txt").write_text(text + "\n")
     print(text)
 
     measured = measured_combinations(bench)
     comp = model_comparison(measured, estimates, choices)
-    text = comparison_text(comp, run)
+    text = comparison_text(comp, run, model, logging_dir)
     (run / "model_vs_measured.txt").write_text(text + "\n")
     print(text)
 
@@ -856,16 +995,23 @@ def analyze(run):
     noise = noise_floor(bench, pvd)
     fig = plot_pinned_vs_default(pvd, noise)
     with plt.rc_context(pr.PLOT_STYLE):
-        fig.suptitle(f"{label(run)}: pinned algorithm/protocol vs. NCCL's choice (ncclbench, 3 rounds)")
+        fig.suptitle(f"{label(run)}: pinned algorithm/protocol vs. NCCL's choice (ncclbench, {rounds} rounds)")
     fig.savefig(run / "pinned_vs_default.pdf", bbox_inches="tight")
     plt.close(fig)
-    text = best_text(pvd, comp, noise, run)
+    text = best_text(pvd, comp, noise, run, rounds)
     (run / "best_vs_default.txt").write_text(text + "\n")
     print(text)
 
 
 def main():
-    analyze(run_from_args(__doc__, "tuning"))
+    parser = run_parser(__doc__, "tuning")
+    parser.add_argument("--logging", type=Path, metavar="LOGGING_RUN",
+                        help="logging run folder for NCCL's TUNING table (default: the newest in results/logging/ "
+                             "that fits the tuning run)")
+    args = parser.parse_args()
+    run = choose_run(args.run, "tuning")
+    logging_run = choose_run(args.logging, "logging", option="--logging") if args.logging else matching_logging_run(run)
+    analyze(run, logging_run)
 
 
 if __name__ == "__main__":
