@@ -1,5 +1,5 @@
 // Summary of the tuning experiment (experiments/tuning.sbatch). Compile from the repository root (figures are read
-// from results/, written by `uv run analysis/analyze.py results/tuning/<job>`):
+// from results/, written by `uv run analysis/analyze_tuning.py results/tuning/<job>`):
 //   typst compile --root . report/tuning/summary.typ
 //   typst compile --root . --input run=results/tuning/<job> report/tuning/summary.typ     other run
 //   typst watch --root . report/tuning/summary.typ                                        recompile on changes

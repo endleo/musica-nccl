@@ -37,9 +37,12 @@ report/               summaries (Typst), one folder per experiment
   logging/summary.typ    logging experiment: NCCL's environment, layout, choices and cost model
   tuning/summary.typ     tuning experiment: pinned vs. NCCL's choice, NCCL's estimates vs. measured times
 analysis/
-  analyze.py          plots and tables of a run (the evaluation cells of the Chameleon notebook); runs with
-                      variants (tuning) are handed to tuning_musica.py
-  tuning_musica.py    evaluation of a MUSICA tuning run (choices per variant, cost model, rounds, pinned vs. default)
+  analyze_full.py     profiler experiment (full, also quick): plots and tables of a run (the evaluation cells of
+                      the Chameleon notebook)
+  analyze_tuning.py   tuning experiment, MUSICA only for now (choices per variant, cost model, rounds, pinned vs.
+                      default)
+  analyze_logging.py  logging experiment: stub, no analysis yet
+  common.py           shared by the analyze_*.py scripts (results folder, command line, choice of the run)
   profiler_results.py parsing of benchmark and profiler outputs (copied from the Chameleon project)
 files/comma/Cargo.lock  pinned crate versions for the CoMMA build (its repo has none)
 files/ncclsee/tree-mutex.patch  fix of a race in ncclsee-cpp's event trees, applied by build.sh (see the patch)
@@ -74,7 +77,9 @@ Locally:
 
 ```sh
 ./fetch.sh                  # default remote musica:musica-nccl (ssh config entry "musica")
-uv run analysis/analyze.py  # newest run; or: uv run analysis/analyze.py results/<experiment>/<job>
+uv run analysis/analyze_full.py     # newest run in results/full/, or: ... analyze_full.py results/full/<job>
+uv run analysis/analyze_tuning.py   # newest run in results/tuning/ (the same with a run folder)
+uv run analysis/analyze_logging.py  # stub, no analysis yet
 typst compile --root . report/<experiment>/summary.typ    # summary with the figures of the run (see below)
 ```
 
@@ -93,7 +98,7 @@ to MUSICA, all in `config.sh` (`MACHINE=spark`) unless stated:
   `full` takes about an hour). The `#SBATCH` lines are only comments then; the iterations default to the batch file's
   `--array` (`full`: 3) and run one after the other. Run ids are `spark-<date>-<time>`, e.g.
   `results/full/spark-20261104-153000/01/`, so they cannot clash with MUSICA's job ids in a `results/` fetched from
-  both; `analyze.py` and `tuning_musica.py` pick the newest run by the date in `job-info.txt`
+  both; the `analyze_*.py` scripts pick the newest run by the date in `job-info.txt`
 - `LAUNCHER`: `mpirun` with one rank per node (`--prefix` PRRTE's install, so the other nodes find its daemon
   `prted`: spack's OpenMPI uses an external PRRTE). mpirun does not pass the environment on, so `experiment.sh`
   sets the variant's environment and `LOG_NCCL` per rank behind the launcher, and `-x` passes the library paths;
@@ -132,7 +137,7 @@ gets; `%1` lets only one of them run at a time. Other counts on the command line
 fresh servers on Chameleon.
 
 A new experiment is a copy of one of the batch files with other parameters and another `EXPERIMENT` name (the
-results folder); `analyze.py` takes the profilers, tests, sizes and ncclbench settings from the results.
+results folder); `analyze_full.py` takes the profilers, tests, sizes and ncclbench settings from the results.
 
 Differences to Chameleon:
 
@@ -182,10 +187,22 @@ Short summaries to send around, one per experiment, compiled from the repository
 `typst compile --root . report/profilers/summary.typ` (text written for run 1863257, figures from the analysis of the
 run; `--input run=results/<experiment>/<job>` for another run) writes `report/profilers/summary.pdf`;
 `report/logging/summary.typ` (run 1889653) has no figures, its numbers are taken from the logs;
-`report/tuning/summary.typ` (run 1893400) reads its figures from `results/tuning/<job>/`, so run `analyze.py` on
-the tuning run first (it also needs the logging run 1889653 in `results/`, for NCCL's cost table).
+`report/tuning/summary.typ` (run 1893400) reads its figures from `results/tuning/<job>/`, so run
+`analyze_tuning.py` on the tuning run first (it also needs the logging run 1889653 in `results/`, for NCCL's cost
+table).
 
-`analyze.py` writes `violins.pdf` per iteration and per run:
+There is one analysis script per experiment, `analysis/analyze_<experiment>.py`; without an argument it analyzes
+the newest run of its experiment (by the date in `job-info.txt`), otherwise the run folder given. It refuses runs of
+other experiments and names the script for them. Each writes its figures and tables into the run folder.
+
+| experiment | script | writes |
+| --- | --- | --- |
+| `full` (profilers), also `quick` | `analyze_full.py` | see below |
+| `tuning` | `analyze_tuning.py` | see below |
+| `logging` | `analyze_logging.py` | nothing yet (stub; `report/logging/summary.typ` is taken from the logs by hand) |
+
+`analyze_full.py` (default: newest run in `results/full/`; quick runs only with their folder, `results/quick/<job>`)
+writes `violins.pdf` per iteration and per run:
 
 - `recorded_operations.pdf`, `recorded_by_size.pdf`: share of the NCCL calls with a recorded time (total, per size)
 - `latency_ratio.pdf`: ncclbench latencies over all sizes, and the ratio profiler / benchmark time of the same call
@@ -193,9 +210,9 @@ the tuning run first (it also needs the logging run 1889653 in `results/`, for N
   against the spread within an iteration
 - `reported_times.txt`: mean times per size, as the tables in the Chameleon notebook
 
-For a tuning run (`results/tuning/<job>/<round>/<variant>/`), `analyze.py` calls `tuning_musica.py` (MUSICA only),
-which extracts the profiler outputs of every variant and writes into the run folder (ncclbench times, all rounds
-together unless stated). Before that, it checks the run against what it assumes (MUSICA, NCCL 2.27.7, 2 nodes x 4
+`analyze_tuning.py` (tuning runs, `results/tuning/<job>/<round>/<variant>/`; MUSICA only for now) extracts the
+profiler outputs of every variant and writes into the run folder (ncclbench times, all rounds together unless
+stated). Before that, it checks the run against what it assumes (MUSICA, NCCL 2.27.7, 2 nodes x 4
 H100, the 3 rounds and 7 variants of `tuning.sbatch`, 8 channels, logging run 1889653) and aborts with the list of
 mismatches if anything differs. It writes:
 

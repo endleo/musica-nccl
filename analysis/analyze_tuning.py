@@ -1,10 +1,9 @@
-"""Evaluation of a tuning run on MUSICA (experiments/tuning.sbatch): NCCL's own choice vs. pinned algorithm/protocol.
-MUSICA only: the logging run (LOGGING_RUN), the communicator (COMM_*), the available combinations (COMBINATIONS) and
-NCCL 2.27.7's cost model are built in. Before evaluating, check_run_info and check_communicator compare the run with
-these assumptions (EXPECTED_*, COMM_*, COMBINATIONS) and abort with the list of mismatches.
+"""Tuning experiment (experiments/tuning.sbatch): NCCL's own choice vs. pinned algorithm/protocol.
+For now MUSICA only: the logging run (LOGGING_RUN), the communicator (COMM_*), the available combinations
+(COMBINATIONS) and NCCL 2.27.7's cost model are built in. Before evaluating, check_run_info and check_communicator
+compare the run with these assumptions (EXPECTED_*, COMM_*, COMBINATIONS) and abort with the list of mismatches.
 
-    uv run analysis/analyze.py results/tuning/<job>             analyze.py hands runs with variants to this module
-    uv run analysis/tuning_musica.py [results/tuning/<job>]     the same; default: newest tuning run
+    uv run analysis/analyze_tuning.py [results/tuning/<job>]     default: newest run in results/tuning/
 
 Layout of a run: <run>/<round>/<variant>/ with the ncclbench outputs and profiler-out.tar.gz (ncclsee) of one variant,
 <run>/job-info.txt for the whole job. Every variant runs AllReduce and Broadcast; the tree_* variants only pin
@@ -23,16 +22,16 @@ Writes into the run folder:
     pinned_vs_default.pdf     median latency of every variant, and pinned / default per size
     best_vs_default.txt       per size: NCCL's choice, the fastest measured combination and the difference
 
-Statistics as in analyze.py: ncclbench's per-call times (max over ranks), warm-ups dropped; medians and quartiles
+Statistics as in analyze_full.py: ncclbench's per-call times (max over ranks), warm-ups dropped; medians and quartiles
 over the 50 iterations of each of the 3 rounds together (150 calls per size and variant) unless stated otherwise.
 """
 
-import argparse
 import re
 from pathlib import Path
 
+from common import RESULTS, label, run_from_args  # before pyplot: sets matplotlib's backend
+
 import matplotlib
-matplotlib.use("Agg")  # only files, no windows
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -41,7 +40,6 @@ from matplotlib.patches import Patch
 
 import profiler_results as pr
 
-RESULTS = (Path(__file__).resolve().parent.parent / "results").resolve()
 # the logging run whose TUNING table (latency/bandwidth per combination) and choices the tuning run is compared with
 LOGGING_RUN = RESULTS / "logging" / "1889653" / "01"
 
@@ -216,12 +214,6 @@ def check_communicator(run, choices, table):
         problems.append(f"TUNING table of the logging run offers {available}, expected COMBINATIONS {COMBINATIONS}")
     if problems:
         _abort(run, problems)
-
-
-def label(path):
-    """short name of a run folder for figure titles: results/tuning/1893400 -> tuning/1893400"""
-    path = Path(path).resolve()
-    return str(path.relative_to(RESULTS)) if path.is_relative_to(RESULTS) else str(path)
 
 
 def variant_name(algo, proto):
@@ -872,17 +864,8 @@ def analyze(run):
     print(text)
 
 
-def is_tuning_run(run):
-    """a run with variants: <run>/<round>/<variant>/profiler-out.tar.gz"""
-    return any(Path(run).glob("[0-9]*/*/profiler-out.tar.gz"))
-
-
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("run", nargs="?", type=Path, help="run folder (default: newest in results/tuning/)")
-    args = parser.parse_args()
-    run = args.run or pr.newest_run((RESULTS / "tuning").glob("*"))
-    analyze(run)
+    analyze(run_from_args(__doc__, "tuning"))
 
 
 if __name__ == "__main__":

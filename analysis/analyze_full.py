@@ -1,36 +1,25 @@
-"""Plots and tables of one run (the evaluation cells of nccl_bench.ipynb in the Chameleon project).
+"""Profiler experiment ("full", experiments/full.sbatch): benchmark vs. profiler times of one run (the evaluation
+cells of nccl_bench.ipynb in the Chameleon project).
 
-    uv run analysis/analyze.py [results/<experiment>/<job>]      default: newest run of any experiment
+    uv run analysis/analyze_full.py [results/full/<job>]      default: newest run in results/full/
+
+Also takes quick runs (experiments/quick.sbatch, same layout) when given their folder: results/quick/<job>.
 
 A run is one array job of an experiment; its iteration folders (01, 02, ...) are the array tasks. The profilers,
 tests and ncclbench settings are taken from the run itself (output file names, job-info.txt). Writes into the run
 folder: violins.pdf per iteration; recorded_operations.pdf, recorded_by_size.pdf, latency_ratio.pdf,
 iteration_consistency.pdf
 and reported_times.txt per run.
-
-Runs with variants (tuning experiment: <run>/<round>/<variant>/) are evaluated by tuning_musica.py instead
-(MUSICA only).
 """
 
-import argparse
 import re
-from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")  # only files, no windows
+from common import label, run_from_args  # before pyplot: sets matplotlib's backend
+
 import matplotlib.pyplot as plt
-
 import pandas as pd
 
 import profiler_results as pr
-import tuning_musica as tuning  # MUSICA only (built-in logging run, communicator, cost model of NCCL 2.27.7)
-
-RESULTS = Path(__file__).resolve().parent.parent / "results"
-
-def label(path):
-    """short name of a run or iteration folder for figure titles: results/full/1863257/01 -> full/1863257/01"""
-    path = Path(path).resolve()
-    return str(path.relative_to(RESULTS)) if path.is_relative_to(RESULTS) else str(path)
 
 
 # message sizes of the violin plots (those the run has; the smallest and largest size if it has none of them)
@@ -138,14 +127,7 @@ def reported_time_tables(run, iteration_dirs, settings, df_all):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("run", nargs="?", type=Path, help="run folder (default: newest in results/*/)")
-    args = parser.parse_args()
-    run = args.run or pr.newest_run(RESULTS.glob("*/*"))
-    if tuning.is_tuning_run(run):
-        tuning.analyze(run)
-        return
-
+    run = run_from_args(__doc__, "full", accepted=["full", "quick"])
     iteration_dirs = []
     for d in sorted(p for p in run.iterdir() if p.is_dir() and p.name.isdigit()):
         if (d / "profiler-out.tar.gz").exists():

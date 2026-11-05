@@ -2,7 +2,7 @@
 //   typst compile --root . report/profilers/summary.typ
 //   typst compile --root . --input run=results/full/<job> report/profilers/summary.typ     other run
 //   typst watch --root . report/profilers/summary.typ                                      recompile on changes
-// The figures come from analysis/analyze.py; the text is written for run 1863257.
+// The figures come from analysis/analyze_full.py; the text is written for run 1863257.
 
 #let run = sys.inputs.at("run", default: "results/full/1863257")
 #let fig(name) = "/" + run + "/" + name

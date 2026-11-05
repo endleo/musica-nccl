@@ -16,18 +16,18 @@ Open items per experiment (and general ones first), roughly by priority; done it
 - [ ] With NCCL >= 2.29.2: check that the broadcast workaround (`NCCL_ALLGATHERV_ENABLE=0`) is still needed
 
 ### Analysis scripts
-- [ ] Review `analysis/` (`analyze.py`, `tuning_musica.py`, `profiler_results.py`) and build a test suite for it:
+- [ ] Review `analysis/` (`analyze_*.py`, `common.py`, `profiler_results.py`) and build a test suite for it:
   - the scripts have grown hard to follow: assumptions about the run spread over constants, parsing and
     fallbacks (e.g. the rank count for ncclbench: nccl-tests output, else `job-info.txt`), problems only warned
     about or silently skipped (missing iterations or benchmark outputs, unknown ncclsee data types, differing
     settings between iterations, ncclbench without `--blocking`); one place that parses `job-info.txt`
-    (`tuning_musica.job_info`) instead of a regex per call site
+    (`analyze_tuning.job_info`, maybe into `common.py`) instead of a regex per call site
   - regression tests against the existing runs: the outputs of `full/1863257`, `full/1874191`, `quick/1863239`,
     `tuning/1893400` (text identical, PDFs identical when rendered), run on copies so `results/` stays untouched;
     the logging runs (1889653, `spark-20261104-154532`) have no outputs yet, so take their first outputs as the
     reference after a check by hand
   - unit tests for the parsers (`job-info.txt`, ncclbench csv, nccl-tests table and header, the profiler
-    formats, NCCL's TUNING table) and for the run checks of `tuning_musica.py`, with small fixtures
+    formats, NCCL's TUNING table) and for the run checks of `analyze_tuning.py`, with small fixtures
 
 ### Slurm
 - [ ] Switch all batch files in `experiments/` from MUSICA's comfort mode to explicit
@@ -47,7 +47,7 @@ Open items per experiment (and general ones first), roughly by priority; done it
       "Subnet-aware routing: overriding dev" in the NET log. If it does not work: restrict `NCCL_IB_HCA`, or fall back
       to sockets (`NCCL_IB_DISABLE=1`, then over `NCCL_SOCKET_IFNAME`, which has to reach both neighbors)
 - [ ] CoMMA on the Sparks (rust, libclang, protobuf; skipped in `build.sh` for now)
-- [ ] Tuning analysis for a Spark run: `tuning_musica.py` has MUSICA's logging run (`LOGGING_RUN`), communicator
+- [ ] Tuning analysis for a Spark run: `analyze_tuning.py` has MUSICA's logging run (`LOGGING_RUN`), communicator
       (`COMM_CHANNELS, COMM_RANKS, COMM_NODES` = 8, 8, 2) and available combinations (`COMBINATIONS`) built in, and
       its cost model is NCCL 2.27.7's; make them parameters of the run (from a logging run on the Sparks), and check
       the variants of `tuning.sbatch` against the TUNING table there (3 ranks, one per node; NCCL 2.32)
@@ -154,6 +154,15 @@ Run 1893400 evaluated in `report/tuning/summary.typ`; done items below (2026-10-
       samples, but run time); per-variant test lists if run time matters
 
 ## Done
+
+### 2026-11-05
+- [x] One analysis script per experiment instead of `analyze.py` handing tuning runs on: `analyze_full.py` (profiler
+      experiment, also quick runs), `analyze_tuning.py` (was `tuning_musica.py`), `analyze_logging.py` (stub);
+      shared code in `common.py`. Each defaults to the newest run of its experiment and refuses runs of other
+      experiments. Checked against the existing outputs, on copies of the runs (`results/` untouched): all figures
+      and tables of `full/1863257`, `full/1874191`, both Spark full runs, `quick/1863239` and `tuning/1893400`
+      byte-identical to those of the previous scripts (with `SOURCE_DATE_EPOCH`) and pixel-identical / identical to
+      the ones in `results/`
 
 ### 2026-10-31
 - [x] Tuning run 1893400 (3 rounds x 7 variants, 42 runs, n3010-020/021) evaluated (`analysis/tuning.py`, called by
