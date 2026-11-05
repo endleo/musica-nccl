@@ -1,0 +1,70 @@
+NCCL's choice vs. the fastest combination (median over all rounds, us), tuning/1893400
+ratio: fastest / NCCL's choice; rounds: in how many rounds it was faster (round medians); model rank: rank of the fastest by NCCL's estimate (1 = NCCL's choice); = : the fastest is NCCL's choice itself
+noise: largest deviation between two runs of the same configuration in the same round (NCCL's own combination pinned vs. default; Broadcast also tree_* vs. default); * = faster in all rounds and by more than the noise
+
+AllReduce
+  size      NCCL choice     median  fastest          median  ratio  rounds   noise  model rank
+  8 B       Tree/LL           22.0  Tree/LL =          22.0  1.000     1/3    1.8%           1
+  16 B      Tree/LL           21.9  Tree/LL =          21.9  1.000     1/3    0.4%           1
+  32 B      Tree/LL           22.0  Tree/LL =          21.9  0.997     2/3    0.6%           1
+  64 B      Tree/LL           22.0  Tree/LL =          22.0  1.000     1/3    1.4%           1
+  128 B     Tree/LL           22.3  Tree/LL =          22.1  0.994     2/3    2.5%           1
+  256 B     Tree/LL           22.3  Tree/LL =          22.2  0.997     2/3    1.3%           1
+  512 B     Tree/LL           22.5  Tree/LL =          22.7  1.009     2/3    2.3%           1
+  1 KiB     Tree/LL           23.1  Tree/LL =          22.9  0.994     2/3    1.2%           1
+  2 KiB     Tree/LL           24.3  Tree/LL =          24.1  0.993     2/3    1.6%           1
+  4 KiB     Tree/LL           25.6  Tree/LL =          25.8  1.009     0/3    1.2%           1
+  8 KiB     Tree/LL           27.3  Tree/LL =          27.1  0.992     3/3    2.2%           1
+  16 KiB    Tree/LL           28.8  Tree/LL =          29.0  1.007     1/3    2.3%           1
+  32 KiB    Tree/LL           33.1  Tree/LL =          32.8  0.992     3/3    1.7%           1
+  64 KiB    Tree/LL           35.3  Tree/LL =          35.4  1.005     1/3    2.1%           1
+  128 KiB   Tree/LL128        40.8  Tree/LL            40.2  0.985     3/3    5.5%           3
+  256 KiB   Tree/LL128        46.1  Tree/LL128 =       47.1  1.021     1/3    6.3%           1
+  512 KiB   Tree/LL128        54.6  Tree/LL128 =       54.9  1.006     1/3    6.2%           1
+  1 MiB     Tree/LL128        73.7  Tree/LL128 =       74.9  1.016     1/3    5.0%           1
+  1536 KiB  Ring/LL128        89.1  Ring/LL128 =       87.0  0.977     3/3    2.7%           1
+  2 MiB     Ring/LL128        94.9  Ring/LL128 =       93.1  0.981     3/3    2.1%           1
+  3 MiB     Ring/LL128       109.6  Ring/LL128 =      107.7  0.983     3/3    1.8%           1
+  4 MiB     Tree/LL128       136.1  Ring/LL128 *      126.7  0.931     3/3    2.9%           2
+  8 MiB     Tree/LL128       191.6  Tree/LL128 =      190.7  0.995     2/3    0.8%           1
+  16 MiB    Tree/LL128       352.7  Tree/LL128 =      353.5  1.002     1/3    0.8%           1
+  32 MiB    Tree/LL128       682.2  Tree/Simple *     617.1  0.905     3/3    0.3%           3
+  64 MiB    Tree/LL128      1168.4  Tree/Simple *    1000.6  0.856     3/3    0.8%           2
+  128 MiB   Tree/Simple     1763.0  Tree/Simple =    1763.4  1.000     1/3    0.3%           1
+  256 MiB   Tree/Simple     3294.1  Tree/Simple =    3294.2  1.000     1/3    0.4%           1
+  512 MiB   Tree/Simple     6353.4  Tree/Simple =    6348.2  0.999     1/3    0.4%           1
+  1 GiB     Tree/Simple    12457.1  Tree/Simple =   12443.0  0.999     1/3    0.3%           1
+
+Broadcast
+  size      NCCL choice     median  fastest          median  ratio  rounds   noise  model rank
+  8 B       Ring/LL           28.1  Ring/LL128         27.5  0.980     2/3   24.3%           2
+  16 B      Ring/LL           27.0  Ring/LL128         27.3  1.014     2/3   27.6%           2
+  32 B      Ring/LL           28.0  Ring/LL =          27.3  0.976     2/3   23.4%           1
+  64 B      Ring/LL           27.9  Ring/LL128         27.5  0.982     2/3   20.2%           2
+  128 B     Ring/LL           27.7  Ring/LL128         27.3  0.984     2/3   25.0%           2
+  256 B     Ring/LL           27.7  Ring/LL128         27.5  0.992     2/3   23.8%           2
+  512 B     Ring/LL           28.6  Ring/LL128         27.5  0.961     3/3   21.8%           2
+  1 KiB     Ring/LL           28.7  Ring/LL128         27.3  0.949     2/3   17.4%           2
+  2 KiB     Ring/LL           29.4  Ring/LL128         27.7  0.944     2/3   23.9%           2
+  4 KiB     Ring/LL           30.4  Ring/LL128         27.9  0.918     2/3   25.9%           2
+  8 KiB     Ring/LL           31.3  Ring/LL128         29.9  0.957     2/3   19.6%           2
+  16 KiB    Ring/LL           28.5  Ring/LL =          29.1  1.023     1/3   21.1%           1
+  32 KiB    Ring/LL           30.0  Ring/LL =          29.8  0.994     3/3    4.9%           1
+  64 KiB    Ring/LL           36.9  Ring/LL =          36.6  0.992     3/3    2.1%           1
+  128 KiB   Ring/LL           45.3  Ring/LL =          45.8  1.010     1/3    3.8%           1
+  256 KiB   Ring/LL           54.5  Ring/LL128 *       49.3  0.904     3/3    9.6%           2
+  512 KiB   Ring/LL           65.9  Ring/LL128 *       55.3  0.839     3/3   10.1%           2
+  1 MiB     Ring/LL128        67.8  Ring/LL128 =       66.9  0.988     3/3    1.7%           1
+  1536 KiB  Ring/LL128        82.0  Ring/LL128 =       81.6  0.996     2/3    1.5%           1
+  2 MiB     Ring/LL128        96.6  Ring/LL128 =       96.3  0.996     2/3    1.4%           1
+  3 MiB     Ring/LL128       125.9  Ring/LL128 =      125.5  0.997     2/3    1.0%           1
+  4 MiB     Ring/LL128       155.3  Ring/LL128 =      155.4  1.001     2/3    0.6%           1
+  8 MiB     Ring/LL128       210.4  Ring/LL128 =      210.5  1.000     2/3    0.4%           1
+  16 MiB    Ring/LL128       317.8  Ring/LL128 =      317.6  0.999     1/3    0.3%           1
+  32 MiB    Ring/LL128       501.3  Ring/LL128 =      501.5  1.000     1/3    0.3%           1
+  64 MiB    Ring/LL128       878.5  Ring/LL128 =      878.8  1.000     0/3    0.1%           1
+  128 MiB   Ring/Simple     1700.4  Ring/LL128 *     1632.8  0.960     3/3    0.1%           2
+  256 MiB   Ring/Simple     3116.7  Ring/Simple =    3117.0  1.000     2/3    0.2%           1
+  512 MiB   Ring/Simple     5909.1  Ring/Simple =    5911.1  1.000     1/3    0.1%           1
+  1 GiB     Ring/Simple    11464.9  Ring/Simple =   11471.8  1.001     0/3    0.2%           1
+

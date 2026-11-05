@@ -9,3 +9,16 @@ dependencies = [
     "numpy",
     "pandas",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-xdist>=3.8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["analysis/tests"]
+addopts = "-n auto"   # pytest-xdist: the regression tests run one analysis each, in parallel
+markers = [
+    "slow: regression tests that run an analysis script on a run from results/ (about 3 min in total, serially)",
+]

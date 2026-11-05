@@ -44,6 +44,8 @@ analysis/
   analyze_logging.py  logging experiment: stub, no analysis yet
   common.py           shared by the analyze_*.py scripts (results folder, command line, choice of the run)
   profiler_results.py parsing of benchmark and profiler outputs (copied from the Chameleon project)
+  tests/              tests of the scripts (pytest, see "Tests of the analysis"); reference/: the outputs of the
+                      regression runs
 files/comma/Cargo.lock  pinned crate versions for the CoMMA build (its repo has none)
 files/ncclsee/tree-mutex.patch  fix of a race in ncclsee-cpp's event trees, applied by build.sh (see the patch)
 results/<experiment>/<job>/<NN>/   output of each array task (<job>: Slurm job id, or <machine>-<date> without Slurm)
@@ -80,6 +82,7 @@ Locally:
 uv run analysis/analyze_full.py     # newest run in results/full/, or: ... analyze_full.py results/full/<job>
 uv run analysis/analyze_tuning.py   # newest run in results/tuning/ (the same with a run folder)
 uv run analysis/analyze_logging.py  # stub, no analysis yet
+uv run pytest                       # tests of the analysis scripts (about 1 min; -m "not slow": a few seconds)
 typst compile --root . report/<experiment>/summary.typ    # summary with the figures of the run (see below)
 ```
 
@@ -223,3 +226,22 @@ mismatches if anything differs. It writes:
 - `round_consistency.pdf`: per variant, how far each round's median is from the median over the rounds
 - `pinned_vs_default.pdf`, `best_vs_default.txt`: every pinned combination against NCCL's choice, with the noise
   floor from two runs of the same configuration
+
+### Tests of the analysis
+
+`uv run pytest` (configuration in `pyproject.toml`, tests in `analysis/tests/`, run in parallel with pytest-xdist):
+
+- `test_cli.py`, `test_tuning_checks.py` (a few seconds, no data needed): the scripts refuse runs of other
+  experiments, missing folders and folders without `job-info.txt`, and take the newest run of their experiment by
+  default; `analyze_tuning.py` aborts, before writing anything, on every mismatch with what it assumes (machine,
+  NCCL, GPUs, rounds, variants, ncclbench settings, missing outputs, the logging run, the communicator). These run
+  on fake runs (a `job-info.txt` and empty files).
+- `test_regression.py` (marked `slow`, about 1 min in parallel, 3.5 min with `-n0`): each script on a copy of
+  existing runs (`full/1863257`, `full/1874191`, both Spark full runs, `quick/1863239`, `tuning/1893400` with
+  `logging/1889653`). Its outputs must equal `analysis/tests/reference/`: text identical, PDFs identical
+  (`SOURCE_DATE_EPOCH=0`, no creation date), or identical when rendered (`pdftoppm`) if only the bytes differ.
+  A test is skipped if its run is missing from `results/`. The copy links to the run's inputs
+  (`ANALYSIS_RESULTS` points the scripts at it), so the outputs in `results/` are never written to.
+
+`uv run pytest -m "not slow"` runs only the quick ones. After a deliberate change of the outputs:
+`uv run pytest -m slow --update-reference`, then check the diff of `analysis/tests/reference/` before committing.

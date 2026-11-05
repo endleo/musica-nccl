@@ -11,7 +11,10 @@ results/
 # created by the analysis
 profiler-out-extracted/
 *.pdf
+# except the reference outputs of the regression tests (analysis/tests/test_regression.py)
+!analysis/tests/reference/**/*.pdf
 
 # python
 __pycache__/
+.pytest_cache/
 .venv

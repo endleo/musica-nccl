@@ -6,6 +6,7 @@ experiment is rejected with the name of the script for it.
 """
 
 import argparse
+import os
 import re
 from pathlib import Path
 
@@ -14,7 +15,8 @@ matplotlib.use("Agg")  # only files, no windows
 
 import profiler_results as pr
 
-RESULTS = (Path(__file__).resolve().parent.parent / "results").resolve()
+# results/ of the repository; ANALYSIS_RESULTS points the scripts at another one (the tests use copies of the runs)
+RESULTS = Path(os.environ.get("ANALYSIS_RESULTS") or Path(__file__).resolve().parent.parent / "results").resolve()
 
 # analysis script per experiment (EXPERIMENT in experiments/<experiment>.sbatch); quick runs have the layout of full
 # runs, so analyze_full.py takes them as well

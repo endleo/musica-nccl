@@ -1,0 +1,205 @@
+Calls recorded by ncclsee per (round, variant, test, size), all ranks; expected 8 ranks x (5 + 50) = 440
+  min 440, max 440 over 1260 groups
+  rounds per (variant, test, size, algo, proto, channels, warps): [3] (3 = the same choice in every round)
+
+AllReduce, default (NCCL's choice)
+  size                  algo    proto    channels  warps
+  8 B - 4 KiB           tree    ll       1         20
+  8 KiB                 tree    ll       2         20
+  16 KiB                tree    ll       4         20
+  32 KiB - 64 KiB       tree    ll       8         20
+  128 KiB - 1 MiB       tree    ll128    8         20
+  1536 KiB - 3 MiB      ring    ll128    8         20
+  4 MiB - 64 MiB        tree    ll128    8         20
+  128 MiB - 1 GiB       tree    simple   8         20
+
+AllReduce, ring_ll (Ring/LL pinned): OK, every call used the pinned combination
+  size                  algo    proto    channels  warps
+  8 B - 4 KiB           ring    ll       1         3
+  8 KiB                 ring    ll       1         4
+  16 KiB                ring    ll       1         8
+  32 KiB                ring    ll       1         16
+  64 KiB                ring    ll       2         16
+  128 KiB               ring    ll       4         16
+  256 KiB - 1 GiB       ring    ll       8         16
+
+AllReduce, ring_ll128 (Ring/LL128 pinned): OK, every call used the pinned combination
+  size                  algo    proto    channels  warps
+  8 B - 4 KiB           ring    ll128    1         10
+  8 KiB                 ring    ll128    1         20
+  16 KiB                ring    ll128    2         20
+  32 KiB                ring    ll128    4         20
+  64 KiB - 1 GiB        ring    ll128    8         20
+
+AllReduce, ring_simple (Ring/Simple pinned): OK, every call used the pinned combination
+  size                  algo    proto    channels  warps
+  8 B - 4 KiB           ring    simple   1         3
+  8 KiB                 ring    simple   1         5
+  16 KiB                ring    simple   1         9
+  32 KiB                ring    simple   1         17
+  64 KiB                ring    simple   2         17
+  128 KiB               ring    simple   4         17
+  256 KiB - 1 GiB       ring    simple   8         17
+
+AllReduce, tree_ll (Tree/LL pinned): OK, every call used the pinned combination
+  size                  algo    proto    channels  warps
+  8 B - 4 KiB           tree    ll       1         20
+  8 KiB                 tree    ll       2         20
+  16 KiB                tree    ll       4         20
+  32 KiB - 1 GiB        tree    ll       8         20
+
+AllReduce, tree_ll128 (Tree/LL128 pinned): OK, every call used the pinned combination
+  size                  algo    proto    channels  warps
+  8 B - 8 KiB           tree    ll128    1         20
+  16 KiB                tree    ll128    2         20
+  32 KiB                tree    ll128    4         20
+  64 KiB - 1 GiB        tree    ll128    8         20
+
+AllReduce, tree_simple (Tree/Simple pinned): OK, every call used the pinned combination
+  size                  algo    proto    channels  warps
+  8 B - 32 KiB          tree    simple   1         20
+  64 KiB                tree    simple   2         20
+  128 KiB               tree    simple   4         20
+  256 KiB - 1 GiB       tree    simple   8         20
+
+Broadcast, default (NCCL's choice)
+  size                  algo    proto    channels  warps
+  8 B - 4 KiB           ring    ll       1         3
+  8 KiB                 ring    ll       1         4
+  16 KiB                ring    ll       1         8
+  32 KiB                ring    ll       1         16
+  64 KiB                ring    ll       2         16
+  128 KiB               ring    ll       4         16
+  256 KiB - 512 KiB     ring    ll       8         16
+  1 MiB - 64 MiB        ring    ll128    8         20
+  128 MiB - 1 GiB       ring    simple   8         17
+
+Broadcast, ring_ll (Ring/LL pinned): OK, every call used the pinned combination
+  size                  algo    proto    channels  warps
+  8 B - 4 KiB           ring    ll       1         3
+  8 KiB                 ring    ll       1         4
+  16 KiB                ring    ll       1         8
+  32 KiB                ring    ll       1         16
+  64 KiB                ring    ll       2         16
+  128 KiB               ring    ll       4         16
+  256 KiB - 1 GiB       ring    ll       8         16
+
+Broadcast, ring_ll128 (Ring/LL128 pinned): OK, every call used the pinned combination
+  size                  algo    proto    channels  warps
+  8 B - 4 KiB           ring    ll128    1         10
+  8 KiB - 16 KiB        ring    ll128    1         20
+  32 KiB                ring    ll128    2         20
+  64 KiB                ring    ll128    4         20
+  128 KiB - 1 GiB       ring    ll128    8         20
+
+Broadcast, ring_simple (Ring/Simple pinned): OK, every call used the pinned combination
+  size                  algo    proto    channels  warps
+  8 B - 4 KiB           ring    simple   1         3
+  8 KiB                 ring    simple   1         5
+  16 KiB                ring    simple   1         9
+  32 KiB                ring    simple   1         17
+  64 KiB                ring    simple   2         17
+  128 KiB               ring    simple   4         17
+  256 KiB - 1 GiB       ring    simple   8         17
+
+Broadcast, tree_ll (NCCL's choice)
+  size                  algo    proto    channels  warps
+  8 B - 4 KiB           ring    ll       1         3
+  8 KiB                 ring    ll       1         4
+  16 KiB                ring    ll       1         8
+  32 KiB                ring    ll       1         16
+  64 KiB                ring    ll       2         16
+  128 KiB               ring    ll       4         16
+  256 KiB - 512 KiB     ring    ll       8         16
+  1 MiB - 64 MiB        ring    ll128    8         20
+  128 MiB - 1 GiB       ring    simple   8         17
+
+Broadcast, tree_ll128 (NCCL's choice)
+  size                  algo    proto    channels  warps
+  8 B - 4 KiB           ring    ll       1         3
+  8 KiB                 ring    ll       1         4
+  16 KiB                ring    ll       1         8
+  32 KiB                ring    ll       1         16
+  64 KiB                ring    ll       2         16
+  128 KiB               ring    ll       4         16
+  256 KiB - 512 KiB     ring    ll       8         16
+  1 MiB - 64 MiB        ring    ll128    8         20
+  128 MiB - 1 GiB       ring    simple   8         17
+
+Broadcast, tree_simple (NCCL's choice)
+  size                  algo    proto    channels  warps
+  8 B - 4 KiB           ring    ll       1         3
+  8 KiB                 ring    ll       1         4
+  16 KiB                ring    ll       1         8
+  32 KiB                ring    ll       1         16
+  64 KiB                ring    ll       2         16
+  128 KiB               ring    ll       4         16
+  256 KiB - 512 KiB     ring    ll       8         16
+  1 MiB - 64 MiB        ring    ll128    8         20
+  128 MiB - 1 GiB       ring    simple   8         17
+
+NCCL's choice (default variant) vs. logging run 1889653 (ncclsee records) and the cost model (minimum estimate)
+  AllReduce:
+    8 B        tuning tree/ll/1ch/20w            logging tree/ll/1ch/20w            model tree/ll       
+    16 B       tuning tree/ll/1ch/20w            logging tree/ll/1ch/20w            model tree/ll       
+    32 B       tuning tree/ll/1ch/20w            logging tree/ll/1ch/20w            model tree/ll       
+    64 B       tuning tree/ll/1ch/20w            logging tree/ll/1ch/20w            model tree/ll       
+    128 B      tuning tree/ll/1ch/20w            logging tree/ll/1ch/20w            model tree/ll       
+    256 B      tuning tree/ll/1ch/20w            logging tree/ll/1ch/20w            model tree/ll       
+    512 B      tuning tree/ll/1ch/20w            logging tree/ll/1ch/20w            model tree/ll       
+    1 KiB      tuning tree/ll/1ch/20w            logging tree/ll/1ch/20w            model tree/ll       
+    2 KiB      tuning tree/ll/1ch/20w            logging tree/ll/1ch/20w            model tree/ll       
+    4 KiB      tuning tree/ll/1ch/20w            logging tree/ll/1ch/20w            model tree/ll       
+    8 KiB      tuning tree/ll/2ch/20w            logging tree/ll/2ch/20w            model tree/ll       
+    16 KiB     tuning tree/ll/4ch/20w            logging tree/ll/4ch/20w            model tree/ll       
+    32 KiB     tuning tree/ll/8ch/20w            logging tree/ll/8ch/20w            model tree/ll       
+    64 KiB     tuning tree/ll/8ch/20w            logging tree/ll/8ch/20w            model tree/ll       
+    128 KiB    tuning tree/ll128/8ch/20w         logging tree/ll128/8ch/20w         model tree/ll128    
+    256 KiB    tuning tree/ll128/8ch/20w         logging tree/ll128/8ch/20w         model tree/ll128    
+    512 KiB    tuning tree/ll128/8ch/20w         logging tree/ll128/8ch/20w         model tree/ll128    
+    1 MiB      tuning tree/ll128/8ch/20w         logging tree/ll128/8ch/20w         model tree/ll128    
+    1536 KiB   tuning ring/ll128/8ch/20w         logging (not in logging run)       model ring/ll128    
+    2 MiB      tuning ring/ll128/8ch/20w         logging ring/ll128/8ch/20w         model ring/ll128    
+    3 MiB      tuning ring/ll128/8ch/20w         logging (not in logging run)       model ring/ll128    
+    4 MiB      tuning tree/ll128/8ch/20w         logging tree/ll128/8ch/20w         model tree/ll128    
+    8 MiB      tuning tree/ll128/8ch/20w         logging tree/ll128/8ch/20w         model tree/ll128    
+    16 MiB     tuning tree/ll128/8ch/20w         logging tree/ll128/8ch/20w         model tree/ll128    
+    32 MiB     tuning tree/ll128/8ch/20w         logging tree/ll128/8ch/20w         model tree/ll128    
+    64 MiB     tuning tree/ll128/8ch/20w         logging tree/ll128/8ch/20w         model tree/ll128    
+    128 MiB    tuning tree/simple/8ch/20w        logging tree/simple/8ch/20w        model tree/simple   
+    256 MiB    tuning tree/simple/8ch/20w        logging tree/simple/8ch/20w        model tree/simple   
+    512 MiB    tuning tree/simple/8ch/20w        logging tree/simple/8ch/20w        model tree/simple   
+    1 GiB      tuning tree/simple/8ch/20w        logging tree/simple/8ch/20w        model tree/simple   
+  Broadcast:
+    8 B        tuning ring/ll/1ch/3w             logging ring/ll/1ch/3w             model ring/ll       
+    16 B       tuning ring/ll/1ch/3w             logging ring/ll/1ch/3w             model ring/ll       
+    32 B       tuning ring/ll/1ch/3w             logging ring/ll/1ch/3w             model ring/ll       
+    64 B       tuning ring/ll/1ch/3w             logging ring/ll/1ch/3w             model ring/ll       
+    128 B      tuning ring/ll/1ch/3w             logging ring/ll/1ch/3w             model ring/ll       
+    256 B      tuning ring/ll/1ch/3w             logging ring/ll/1ch/3w             model ring/ll       
+    512 B      tuning ring/ll/1ch/3w             logging ring/ll/1ch/3w             model ring/ll       
+    1 KiB      tuning ring/ll/1ch/3w             logging ring/ll/1ch/3w             model ring/ll       
+    2 KiB      tuning ring/ll/1ch/3w             logging ring/ll/1ch/3w             model ring/ll       
+    4 KiB      tuning ring/ll/1ch/3w             logging ring/ll/1ch/3w             model ring/ll       
+    8 KiB      tuning ring/ll/1ch/4w             logging ring/ll/1ch/4w             model ring/ll       
+    16 KiB     tuning ring/ll/1ch/8w             logging ring/ll/1ch/8w             model ring/ll       
+    32 KiB     tuning ring/ll/1ch/16w            logging ring/ll/1ch/16w            model ring/ll       
+    64 KiB     tuning ring/ll/2ch/16w            logging ring/ll/2ch/16w            model ring/ll       
+    128 KiB    tuning ring/ll/4ch/16w            logging ring/ll/4ch/16w            model ring/ll       
+    256 KiB    tuning ring/ll/8ch/16w            logging ring/ll/8ch/16w            model ring/ll       
+    512 KiB    tuning ring/ll/8ch/16w            logging ring/ll/8ch/16w            model ring/ll       
+    1 MiB      tuning ring/ll128/8ch/20w         logging ring/ll128/8ch/20w         model ring/ll128    
+    1536 KiB   tuning ring/ll128/8ch/20w         logging (not in logging run)       model ring/ll128    
+    2 MiB      tuning ring/ll128/8ch/20w         logging ring/ll128/8ch/20w         model ring/ll128    
+    3 MiB      tuning ring/ll128/8ch/20w         logging (not in logging run)       model ring/ll128    
+    4 MiB      tuning ring/ll128/8ch/20w         logging ring/ll128/8ch/20w         model ring/ll128    
+    8 MiB      tuning ring/ll128/8ch/20w         logging ring/ll128/8ch/20w         model ring/ll128    
+    16 MiB     tuning ring/ll128/8ch/20w         logging ring/ll128/8ch/20w         model ring/ll128    
+    32 MiB     tuning ring/ll128/8ch/20w         logging ring/ll128/8ch/20w         model ring/ll128    
+    64 MiB     tuning ring/ll128/8ch/20w         logging ring/ll128/8ch/20w         model ring/ll128    
+    128 MiB    tuning ring/simple/8ch/17w        logging ring/simple/8ch/17w        model ring/simple   
+    256 MiB    tuning ring/simple/8ch/17w        logging ring/simple/8ch/17w        model ring/simple   
+    512 MiB    tuning ring/simple/8ch/17w        logging ring/simple/8ch/17w        model ring/simple   
+    1 GiB      tuning ring/simple/8ch/17w        logging ring/simple/8ch/17w        model ring/simple   
+
+0 problem(s)

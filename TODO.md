@@ -16,18 +16,16 @@ Open items per experiment (and general ones first), roughly by priority; done it
 - [ ] With NCCL >= 2.29.2: check that the broadcast workaround (`NCCL_ALLGATHERV_ENABLE=0`) is still needed
 
 ### Analysis scripts
-- [ ] Review `analysis/` (`analyze_*.py`, `common.py`, `profiler_results.py`) and build a test suite for it:
+- [ ] Review `analysis/` (`analyze_*.py`, `common.py`, `profiler_results.py`) and extend its tests (`analysis/tests/`):
   - the scripts have grown hard to follow: assumptions about the run spread over constants, parsing and
     fallbacks (e.g. the rank count for ncclbench: nccl-tests output, else `job-info.txt`), problems only warned
     about or silently skipped (missing iterations or benchmark outputs, unknown ncclsee data types, differing
     settings between iterations, ncclbench without `--blocking`); one place that parses `job-info.txt`
     (`analyze_tuning.job_info`, maybe into `common.py`) instead of a regex per call site
-  - regression tests against the existing runs: the outputs of `full/1863257`, `full/1874191`, `quick/1863239`,
-    `tuning/1893400` (text identical, PDFs identical when rendered), run on copies so `results/` stays untouched;
-    the logging runs (1889653, `spark-20261104-154532`) have no outputs yet, so take their first outputs as the
-    reference after a check by hand
+  - regression tests for the logging runs (1889653, `spark-20261104-154532`) once `analyze_logging.py` has an
+    analysis: take their first outputs as the reference (`--update-reference`) after a check by hand
   - unit tests for the parsers (`job-info.txt`, ncclbench csv, nccl-tests table and header, the profiler
-    formats, NCCL's TUNING table) and for the run checks of `analyze_tuning.py`, with small fixtures
+    formats, NCCL's TUNING table), with small fixtures
 
 ### Slurm
 - [ ] Switch all batch files in `experiments/` from MUSICA's comfort mode to explicit
@@ -163,6 +161,11 @@ Run 1893400 evaluated in `report/tuning/summary.typ`; done items below (2026-10-
       and tables of `full/1863257`, `full/1874191`, both Spark full runs, `quick/1863239` and `tuning/1893400`
       byte-identical to those of the previous scripts (with `SOURCE_DATE_EPOCH`) and pixel-identical / identical to
       the ones in `results/`
+- [x] Test suite for the analysis (`uv run pytest`, `analysis/tests/`): command line of every script (other
+      experiments, missing folders, newest run by default), the run checks of `analyze_tuning.py` (every assumption
+      on fake runs, abort before writing), and regression tests on copies of the runs above against the outputs in
+      `analysis/tests/reference/` (text identical, PDFs identical or identical when rendered); about 1 min in
+      parallel, of which the regression runs are nearly all
 
 ### 2026-10-31
 - [x] Tuning run 1893400 (3 rounds x 7 variants, 42 runs, n3010-020/021) evaluated (`analysis/tuning.py`, called by
