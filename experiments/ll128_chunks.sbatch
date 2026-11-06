@@ -8,13 +8,20 @@
 # a single chunk, which crosses the network hops one after the other (no pipelining): time ~ hops x size. Above
 # that, the extra data goes into further chunks that pipeline, and the slope drops by about the number of hops.
 #
-# Test: halve the LL128 buffer (NCCL_LL128_BUFFSIZE, read by kernel and proxy) -> 288,000 B per chunk, so the kink
-# should move from ~4.4 MiB to 8 x 288,000 B = 2,304,000 B (~2.2 MiB). The default variant is NCCL's choice: LL
-# up to 1 MiB (8 nodes) / 2 MiB (16 nodes), then LL128 with the default buffer, i.e. the unchanged kink at ~4.4 MiB.
-# Only Broadcast. Sizes in 256 KiB steps from 512 KiB to 8 MiB around both kinks, plus a few large sizes to see
-# whether the smaller chunks cost bandwidth there.
+# Test: shrink the LL128 buffer (NCCL_LL128_BUFFSIZE, read by kernel and proxy), so the kink should move with the
+# chunk size: half -> 288,000 B per chunk, kink at 8 x 288,000 B (~2.2 MiB); quarter -> 144,000 B, ~1.1 MiB. Ring/LL
+# for comparison: what NCCL picks below the LL128 switch, and what LL128 has to beat. Smaller chunks should make
+# LL128 faster than LL from smaller sizes on, but may cost bandwidth at large sizes (more steps, more proxy work).
+# Variants:
+#   default                NCCL's choice: Ring/LL up to 1 MiB (8 nodes) / 2 MiB (16 nodes), then Ring/LL128 with
+#                          the default buffer, i.e. the unchanged kink at ~4.4 MiB
+#   ring_ll128_halfbuf     Ring/LL128, half the LL128 buffer
+#   ring_ll128_quarterbuf  Ring/LL128, a quarter of the LL128 buffer
+#   ring_ll                Ring/LL (matches default where NCCL picks Ring/LL itself, the noise floor's reference)
+# Only Broadcast, sizes as in experiments/tuning.sbatch (powers of two), from 256 KiB to 512 MiB, plus 1.5x steps
+# from 1.5 MiB to 24 MiB around the kinks.
 # Results in results/ll128_chunks/<job>/<round>/<variant>/ (as experiments/tuning.sbatch; analysis/analyze_tuning.py
-# expects the tuning variants and does not read this experiment).
+# expects the tuning variants and does not read this experiment, see analysis/analyze_anomaly_checks.py).
 # Submit from the repository root: sbatch experiments/ll128_chunks.sbatch (the effect grows with the number of
 # nodes, so run with >= 8, e.g. sbatch --nodes=8 ...)
 #
@@ -34,17 +41,22 @@ EXPERIMENT=ll128_chunks
 PROFILERS=(ncclsee)
 NCCL_TESTS=()
 declare -A NCCLBENCH_TESTS=([broadcast_bench]=ncclBroadcast)
-step=$((256 * 1024))
-NCCLBENCH_ARGS="--sizes $(seq -s ' ' $((2 * step)) $step $((32 * step))) $((12 * 2**20)) $((16 * 2**20))"
-NCCLBENCH_ARGS+=" $((32 * 2**20)) $((64 * 2**20)) $((256 * 2**20)) $((2**30))"
-NCCLBENCH_ARGS+=" --data-type float --blocking --csv --warmups 5 --iterations 50"
+sizes=""
+for ((size = 2**18; size <= 2**29; size *= 2)); do
+    sizes+="$size "
+    if ((size >= 2**20 && size < 2**25)); then sizes+="$((size * 3 / 2)) "; fi  # 1.5 MiB - 24 MiB
+done
+NCCLBENCH_ARGS="--sizes $sizes--data-type float --blocking --csv --warmups 5 --iterations 50"
 ROUNDS=3
 
-# pinning syntax: see experiments/tuning.sbatch. Half of DEFAULT_LL128_BUFFSIZE (4,915,200 B), so the chunk stays a
-# multiple of the LL128 grain (1920 B): 288,000 B = 150 grains
-VARIANTS=(default ring_ll128_halfbuf)
+# pinning syntax: see experiments/tuning.sbatch. Half and a quarter of DEFAULT_LL128_BUFFSIZE (4,915,200 B), so the
+# chunk stays a multiple of the LL128 grain (1920 B): 288,000 B = 150 grains, 144,000 B = 75 grains
+ll128="NCCL_ALGO=broadcast:ring NCCL_PROTO=broadcast:LL128"
+VARIANTS=(default ring_ll128_halfbuf ring_ll128_quarterbuf ring_ll)
 declare -A VARIANT_ENV=(
-    [ring_ll128_halfbuf]="NCCL_ALGO=broadcast:ring NCCL_PROTO=broadcast:LL128 NCCL_LL128_BUFFSIZE=2457600"
+    [ring_ll128_halfbuf]="$ll128 NCCL_LL128_BUFFSIZE=2457600"
+    [ring_ll128_quarterbuf]="$ll128 NCCL_LL128_BUFFSIZE=1228800"
+    [ring_ll]="NCCL_ALGO=broadcast:ring NCCL_PROTO=broadcast:LL"
 )
 
 run_experiment

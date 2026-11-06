@@ -41,13 +41,15 @@ import profiler_results as pr
 
 EXPERIMENTS = ["ll128_chunks", "ll_threads"]
 TEST, OPERATION = "broadcast_bench", "broadcast"
-# per experiment: variant -> (legend label, style); styles as in analyze_tuning.py (protocol = color where the
-# variants differ in protocol, Ring = dashed); the variants of one experiment all pin Ring/LL, so they get colors of
-# their own (Dark2, as PROTO_COLORS)
+# per experiment: variant -> (legend label, style); styles as in analyze_tuning.py (protocol = color, Ring = dashed);
+# variants with the same algorithm and protocol get further colors of their own (Dark2, as PROTO_COLORS)
 VARIANTS = {
     "ll128_chunks": {
-        "ring_ll128_halfbuf": ("Ring/LL128, LL128 buffer halved (NCCL_LL128_BUFFSIZE=2457600)",
+        "ring_ll128_halfbuf": ("Ring/LL128, 1/2 LL128 buffer (NCCL_LL128_BUFFSIZE=2457600)",
                                {"color": at.PROTO_COLORS["ll128"], "linestyle": "--", "marker": "s"}),
+        "ring_ll128_quarterbuf": ("Ring/LL128, 1/4 LL128 buffer (NCCL_LL128_BUFFSIZE=1228800)",
+                                  {"color": "#e6ab02", "linestyle": "--", "marker": "^"}),
+        "ring_ll": ("Ring/LL", {"color": at.PROTO_COLORS["ll"], "linestyle": "--", "marker": "s"}),
     },
     "ll_threads": {
         "ll_1ch": ("Ring/LL, 1 channel, NCCL's thread count",
@@ -59,7 +61,7 @@ VARIANTS = {
     },
 }
 # variants that only pin choices NCCL makes itself at some sizes (no other setting): the noise floor's reference
-PIN_ONLY = {"ll_1ch"}
+PIN_ONLY = {"ll_1ch", "ring_ll"}
 # variants not drawn: ll_1ch only checks that the channel pin changes nothing else (it matches default where default
 # has 1 channel, and gives the noise floor there)
 HIDDEN = {"ll_1ch"}
