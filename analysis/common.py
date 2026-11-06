@@ -21,7 +21,7 @@ RESULTS = Path(os.environ.get("ANALYSIS_RESULTS") or Path(__file__).resolve().pa
 # analysis script per experiment (EXPERIMENT in experiments/<experiment>.sbatch); quick runs have the layout of full
 # runs, so analyze_full.py takes them as well
 SCRIPTS = {"full": "analyze_full.py", "quick": "analyze_full.py", "logging": "analyze_logging.py",
-           "tuning": "analyze_tuning.py"}
+           "tuning": "analyze_tuning.py", "ll128_chunks": "analyze_anomaly_checks.py", "ll_threads": "analyze_anomaly_checks.py"}
 
 
 def label(path):
