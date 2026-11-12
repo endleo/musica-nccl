@@ -55,8 +55,10 @@ analysis/
                       regression runs
 files/comma/Cargo.lock  pinned crate versions for the CoMMA build (its repo has none)
 files/ncclsee/tree-mutex.patch  fix of a race in ncclsee-cpp's event trees, applied by build.sh (see the patch)
-results/<experiment>/<job>/<NN>/   output of each array task (<job>: Slurm job id, or <machine>-<date> without Slurm)
-logs/                 Slurm job output, run-local.sh output (not in git)
+results/<experiment>/<job>/<NN>/   output of each array task (<job>: <machine>-<Slurm job id>, or <machine>-<date>
+                                   without Slurm; older Slurm runs: the bare job id)
+logs/                 Slurm job output (<machine>-<job name>_<job id>..., set by submit.sh), run-local.sh output
+                      (<job name>_<machine>-<date>.out) (not in git)
 ```
 
 ## Before the first run
@@ -109,8 +111,8 @@ to MUSICA, all in `machines/spark.sh` unless stated:
 - no Slurm: `./run-local.sh experiments/<experiment>.sbatch [<iterations>]` instead of `submit.sh`, on dgx1 (in tmux:
   `full` takes about an hour). The `#SBATCH` lines are only comments then; the iterations default to the batch file's
   `--array` (`full`: 3) and run one after the other. Run ids are `spark-<date>-<time>`, e.g.
-  `results/full/spark-20261104-153000/01/`, so they cannot clash with MUSICA's job ids in a `results/` fetched from
-  both; the `analyze_*.py` scripts pick the newest run by the date in `job-info.txt`
+  `results/full/spark-20261104-153000/01/`, so they cannot clash with the `<machine>-<job id>` of Slurm runs in a
+  `results/` fetched from several machines; the `analyze_*.py` scripts pick the newest run by the date in `job-info.txt`
 - `LAUNCHER`: `mpirun` with one rank per node (`--prefix` PRRTE's install, so the other nodes find its daemon
   `prted`: spack's OpenMPI uses an external PRRTE). mpirun does not pass the environment on, so `experiment.sh`
   sets the variant's environment and `LOG_NCCL` per rank behind the launcher, and `-x` passes the library paths;
@@ -185,7 +187,7 @@ rank).
 ### Results of an iteration
 
 ```
-results/<experiment>/<array job id>/<task id>/
+results/<experiment>/<machine>-<array job id>/<task id>/
   job-info.txt                   experiment and its parameters, job, nodes, GPUs (visible per rank), NCCL version,
                                  commits of the builds, loaded modules, `scontrol show job`, environment of the job
   <test>_<profiler>.out          benchmark output (nccl-tests table / ncclbench csv)

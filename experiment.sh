@@ -1,6 +1,7 @@
 # Shared part of the experiments in experiments/*.sbatch (sourced, not executed). An experiment sets
-#   EXPERIMENT        name, results go to results/<EXPERIMENT>/<run id>/<iteration>/; run id and iteration: the array
-#                     job id and task id (Slurm), or RUN_ID and ITERATION (set by run-local.sh, without Slurm)
+#   EXPERIMENT        name, results go to results/<EXPERIMENT>/<run id>/<iteration>/; run id and iteration:
+#                     <machine>-<array job id> and the task id (Slurm; the machine, since job ids of different
+#                     clusters can be equal), or RUN_ID and ITERATION (set by run-local.sh, without Slurm)
 #   PROFILERS         e.g. (comma ncclsee)
 #   NCCL_TESTS        nccl-tests binaries <test>_perf, e.g. (all_reduce broadcast), or () for none; NCCL_TESTS_ARGS
 #   NCCLBENCH_TESTS   associative array <test name> -> ncclbench operation; NCCLBENCH_ARGS (without --operation)
@@ -129,8 +130,10 @@ run_experiment() {
         fi
     done
     PROFILERS=("${available[@]}")
-    # results/<EXPERIMENT>/<run id>: the Slurm job id, or without Slurm RUN_ID from run-local.sh (<machine>-<date>)
-    local run_id="${RUN_ID:-${SLURM_ARRAY_JOB_ID:-$SLURM_JOB_ID}}"
+    # results/<EXPERIMENT>/<run id>: <machine>-<Slurm job id> (job ids of different clusters can clash), or without
+    # Slurm RUN_ID from run-local.sh (<machine>-<date>). Older Slurm runs have the bare job id
+    local job_id="${SLURM_ARRAY_JOB_ID:-$SLURM_JOB_ID}"
+    local run_id="${RUN_ID:-${job_id:+$MACHINE-$job_id}}"
     [ -n "$run_id" ] || { echo "no run id: neither a Slurm job nor RUN_ID (run-local.sh)" >&2; return 1; }
 
     failed=0

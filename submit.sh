@@ -6,6 +6,9 @@
 # replaces the machine's, e.g. --qos=dev_zen4_0768_h100x4 for a short test run on MUSICA; any other option goes to
 # sbatch as it is and overrides the batch file, e.g. --nodes=8 or --array=1-5%1. Options only as --<name>=<value>.
 # Submits from the repository root, which the batch files expect (SLURM_SUBMIT_DIR, logs/).
+# The job log is the batch file's --output with the machine in front of the file name, e.g. logs/musica-%x_%A_%a.out
+# (job ids of different clusters can clash in a logs/ fetched from several machines); --output given here is used as
+# it is.
 # Machines without Slurm (DGX Sparks): ./run-local.sh experiments/<experiment>.sbatch instead.
 set -eo pipefail
 source "$(dirname "$0")/config.sh"
@@ -45,6 +48,16 @@ options=()
 for name in $(printf '%s\n' "${!machine_options[@]}" | sort); do
     options+=("--$name=${machine_options[$name]}")
 done
+
+output_given=false
+for option in "${other_options[@]}"; do
+    [[ $option == --output=* ]] && output_given=true
+done
+if [ "$output_given" = false ]; then
+    output=$(sed -nE 's/^#SBATCH --output=([^ ]+).*/\1/p' "$batch" | tail -n 1)
+    [ -n "$output" ] || { echo "no #SBATCH --output= in $batch" >&2; exit 1; }
+    options+=("--output=$(dirname "$output")/$MACHINE-$(basename "$output")")
+fi
 
 cd "$REPO_DIR"
 echo "sbatch ${options[*]} ${other_options[*]} $batch $*"

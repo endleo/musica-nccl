@@ -223,8 +223,8 @@ def load_ncclbench(path):
 def run_date(run):
     """
     start of a run (`date:` in its first job-info.txt: <run>/job-info.txt with variants, else <run>/<NN>/job-info.txt),
-    None if it has none. Run ids are Slurm job ids (MUSICA) or <machine>-<date> (run-local.sh), so they do not sort
-    by time across machines
+    None if it has none. Run ids are <machine>-<Slurm job id> (older Slurm runs: the bare job id) or <machine>-<date>
+    (run-local.sh), so they do not sort by time across machines
     """
     for info in [*sorted(Path(run).glob("job-info.txt")), *sorted(Path(run).glob("*/job-info.txt"))]:
         m = re.search(r"^date: (\S+)", info.read_text(), re.M)

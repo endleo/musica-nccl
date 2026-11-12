@@ -3,7 +3,7 @@
 #   ./run-local.sh experiments/<experiment>.sbatch [<iterations>]
 # The iterations (default: as the array of the batch file, e.g. 3 for --array=1-3%1, otherwise 1) run one after the
 # other, into results/<experiment>/<run id>/<NN>/. The run id is <machine>-<date>, e.g. spark-20261104-153000: unique
-# without a job id and distinct from MUSICA's job ids in a results/ fetched from both. The output goes to
+# without a job id, like the <machine>-<job id> of Slurm runs (experiment.sh). The output goes to
 # logs/<job name>_<run id>.out and to the terminal; the full experiment takes about an hour, so start it in tmux.
 set -eo pipefail
 cd "$(dirname "$0")"
