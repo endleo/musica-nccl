@@ -24,7 +24,7 @@ exists since NCCL 2.29.7). CoMMA and ncclsee use v4 and work.
 config.sh             shared settings: machine detection, versions, paths, profiler environment
 machines/             settings per machine: modules, GPU arch, NCCL version, launcher, Slurm options
   musica.sh
-  leonardo.sh         untested, Slurm options not filled in yet
+  leonardo.sh         untested; results in $WORK (RESULTS_DIR), the home directory is too small
   spark.sh
 submit.sh             submits a batch file with the machine's Slurm options
 build.sh              clones and builds everything into build/
@@ -37,7 +37,7 @@ experiments/          one Slurm batch file per experiment, with its parameters (
 run-local.sh          runs a batch file without Slurm (DGX Sparks), the iterations one after the other
 experiment.sh         shared part of the experiments (run every test once per profiler, job info, packing)
 profiled.sh           wrapper started per rank: sets the profiler environment, then runs the benchmark
-fetch.sh              copies results/ and logs/ from the cluster into a local clone (rsync over ssh)
+fetch.sh              copies the results (RESULTS_DIR) and logs/ from the cluster into a local clone (rsync over ssh)
 TODO.md               open tasks and progress
 report/               summaries (Typst), one folder per experiment
   profilers/summary.typ  profiler experiment: summary of a run with the figures

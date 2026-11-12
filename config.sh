@@ -16,6 +16,8 @@
 #                    launcher of the benchmarks (one process per rank). build.sh builds NCCL if NCCL_HOME is
 #                    build/nccl/build
 #   list_modules     prints the loaded environment, for job-info.txt
+#   RESULTS_DIR      optional, default results/ in the clone: where the experiments write (e.g. outside a small
+#                    home directory); on a filesystem the compute nodes can write to. fetch.sh copies from there
 # and anything else of the machine (e.g. NCCL network variables). A new machine: a new file, and its detection in
 # detect_machine below.
 # Set MACHINE to override the detection: by Slurm's cluster name (in jobs SLURM_CLUSTER_NAME, on the login nodes only
