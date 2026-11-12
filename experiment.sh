@@ -15,7 +15,7 @@
 #   ROUNDS            number of rounds (default 1)
 # and then calls run_experiment, which runs every test once per profiler (and variant).
 
-source ./config.sh
+source ./config.sh || exit 1
 
 # powers of two from $1 to $2, e.g. `powers_of_two 8 32` -> 8 16 32
 powers_of_two() {

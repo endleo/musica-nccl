@@ -72,6 +72,7 @@ list_modules() {
     case $MACHINE in
         musica) module list 2>&1 ;;
         spark) spack find --loaded 2>&1 ;;
+        *) echo "unknown MACHINE $MACHINE" >&2; return 1 ;;
     esac
 }
 
@@ -109,8 +110,9 @@ check_nccl_version() {
 
 # GPU architecture to compile for: 90 for H100 (MUSICA), 121 for GB10 (DGX Spark)
 case $MACHINE in
+    musica) CUDA_ARCH="90" ;;
     spark) CUDA_ARCH="121" ;;
-    *) CUDA_ARCH="90" ;;
+    *) echo "unknown MACHINE $MACHINE" >&2; return 1 ;;
 esac
 
 # ---------------------------------------------------------------------------------------------
@@ -123,8 +125,9 @@ esac
 # cannot be used with it, so build.sh skips it.
 # Sparks: no NCCL module, build.sh builds this checkout (2.32.3)
 case $MACHINE in
+    musica) NCCL_TAG="v2.27.7-1" ;;
     spark) NCCL_TAG="v2.32.3-1" ;;
-    *) NCCL_TAG="v2.27.7-1" ;;
+    *) echo "unknown MACHINE $MACHINE" >&2; return 1 ;;
 esac
 NCCL_TESTS_TAG="v2.19.6"
 NCCLBENCH_COMMIT="3b9d2c4ffb73a486fcae4eb3f881ad6efe93f3fc"

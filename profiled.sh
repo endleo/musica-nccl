@@ -4,7 +4,7 @@
 # Every node writes into <output directory>/<hostname>, since CoMMA's file names (latency-<pid>.txt) are
 # only unique per node. The environment the benchmark runs with is saved there as env-rank<N>.txt; with
 # LOG_NCCL=true also NCCL's debug log and dumps (nccl_logging_env in config.sh).
-source "$(dirname "$0")/config.sh"
+source "$(dirname "$0")/config.sh" || exit 1
 
 profiler=$1
 host="${SLURMD_NODENAME:-$(hostname -s)}"
