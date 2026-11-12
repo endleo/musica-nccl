@@ -1,10 +1,10 @@
 # Fetches and builds nccl-tests, lib-ncclbench and the profiler plugins into build/ (versions in config.sh),
-# against the NCCL, CUDA and MPI of the modules. On the DGX Sparks (MACHINE=spark, config.sh) NCCL itself is built
-# too, and CoMMA is left out for now (its build needs rust, libclang and protobuf). Run from the repository root:
+# against the NCCL, CUDA and MPI of the modules. Per machine (machines/*.sh): NCCL itself is built too if NCCL_HOME
+# is build/nccl/build (DGX Sparks), and CoMMA only with BUILD_COMMA=true. Run from the repository root:
 #   ./build.sh                  fetch + compile
 #   ./build.sh fetch            only download sources, rust and crates (needs internet)
 #   ./build.sh compile          only compile (after fetch)
-#   ./build.sh clean            remove the build outputs (keeps sources, rust and crates; on the Sparks also NCCL's),
+#   ./build.sh clean            remove the build outputs (keeps sources, rust and crates; also NCCL's if built),
 #                               e.g. after changing modules: make and cmake do not notice that, and cmake keeps the
 #                               CUDA it found in its cache
 
@@ -34,7 +34,7 @@ fetch() {
     local patch="$REPO_DIR/files/ncclsee/tree-mutex.patch"
     git -C ncclsee-cpp apply --reverse --check "$patch" 2>/dev/null || git -C ncclsee-cpp apply "$patch"
 
-    if [ "$MACHINE" = musica ]; then
+    if [ "$BUILD_COMMA" = true ]; then
         # CoMMA reads the NCCL profiler headers from its nccl submodule; point it at our NCCL checkout instead.
         # Its repo has no Cargo.lock; ours is from a working build of COMMA_COMMIT (same as on Chameleon)
         clone https://github.com/google/CoMMA.git CoMMA "$COMMA_COMMIT"
@@ -45,17 +45,16 @@ fetch() {
             | sh -s -- -y --no-modify-path --profile minimal --default-toolchain "$RUST_TOOLCHAIN"
         (cd CoMMA && "$CARGO_HOME/bin/cargo" fetch --locked)
     else
-        echo "Skipping CoMMA on $MACHINE"
+        echo "Skipping CoMMA on $MACHINE (BUILD_COMMA)"
     fi
 }
 
 # the compile_* functions run in BUILD_DIR (except compile_nccl) and use compile's local $jobs
 compile() {
     load_modules
-    [ -n "$CUDA_ARCH" ] || { echo "CUDA_ARCH is not set (config.sh)" >&2; exit 1; }
     local jobs=8  # not more: compiles on the login node
-    # no NCCL module on the Sparks: built from the checkout, into NCCL_HOME (nccl/build)
-    if [ "$MACHINE" = spark ] && [ "$NCCL_HOME" = "$BUILD_DIR/nccl/build" ]; then
+    # machines without an NCCL module (load_modules) use the checkout, built into NCCL_HOME (nccl/build)
+    if [ "$NCCL_HOME" = "$BUILD_DIR/nccl/build" ]; then
         compile_nccl
     fi
     [ -f "$NCCL_HOME/include/nccl.h" ] || { echo "no nccl.h in NCCL_HOME=$NCCL_HOME" >&2; exit 1; }
@@ -70,11 +69,11 @@ compile() {
     compile_ncclsee
 
     local outputs=("$NCCL_TESTS_BIN"/{all_reduce,broadcast}_perf "$NCCLBENCH_BIN" "$NCCLSEE_PLUGIN")
-    if [ "$MACHINE" = musica ]; then
+    if [ "$BUILD_COMMA" = true ]; then
         compile_comma
         outputs+=("$COMMA_PLUGIN")
     else
-        echo "Skipping CoMMA on $MACHINE"
+        echo "Skipping CoMMA on $MACHINE (BUILD_COMMA)"
     fi
 
     ls -l "${outputs[@]}"
@@ -128,8 +127,8 @@ compile_comma() {
 
 clean() {
     cd "$BUILD_DIR"
-    rm -rf nccl-tests/build lib-ncclbench/build ncclsee-cpp/build CoMMA/target
-    [ "$MACHINE" != spark ] || rm -rf nccl/build
+    # nccl/build only exists where build.sh builds NCCL
+    rm -rf nccl-tests/build lib-ncclbench/build ncclsee-cpp/build CoMMA/target nccl/build
     [ ! -d nccl/plugins/profiler/inspector ] || make -C nccl/plugins/profiler/inspector clean
 }
 

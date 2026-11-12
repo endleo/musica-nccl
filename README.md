@@ -10,8 +10,10 @@ CUDA, NCCL (2.27.7) and MPI come from the cluster's modules; the benchmarks and 
 source (same versions as on Chameleon). The experiments are Slurm array jobs; the analysis runs locally.
 
 The same experiments also run on three DGX Sparks (dgx1-3, aarch64, one GB10 each, no Slurm), see
-[DGX Spark cluster](#dgx-spark-cluster). `MACHINE` in `config.sh` (detected from the CPU architecture) selects the
-settings.
+[DGX Spark cluster](#dgx-spark-cluster). `MACHINE` selects the machine's
+settings in `machines/<machine>.sh`; it is detected in `config.sh` from Slurm's cluster name (`vie-musica`), without
+Slurm from the CPU architecture (aarch64: the Sparks), and can be set to override that. A new machine is a new file
+in `machines/` (what it defines: top of `config.sh`) and its detection in `detect_machine` (`config.sh`).
 
 **No NCCL Inspector:** NCCL 2.27 loads profiler plugins up to API v4; the Inspector only implements v5 (and only
 exists since NCCL 2.29.7). CoMMA and ncclsee use v4 and work.
@@ -19,7 +21,11 @@ exists since NCCL 2.29.7). CoMMA and ncclsee use v4 and work.
 ## Layout
 
 ```
-config.sh             shared settings: modules, GPU arch, versions, paths, profiler environment
+config.sh             shared settings: machine detection, versions, paths, profiler environment
+machines/             settings per machine: modules, GPU arch, NCCL version, launcher, Slurm options
+  musica.sh
+  spark.sh
+submit.sh             submits a batch file with the machine's Slurm options
 build.sh              clones and builds everything into build/
 experiments/          one Slurm batch file per experiment, with its parameters (profilers, tests, sizes, ...)
   full.sbatch         the Chameleon experiment: CoMMA + ncclsee, 8 B - 1 GiB, 3 iterations
@@ -56,12 +62,13 @@ logs/                 Slurm job output, run-local.sh output (not in git)
 
 Check the settings (filled in for MUSICA):
 
-- `config.sh`: `module load` lines in `load_modules` (CUDA, NCCL, MPI, cmake; clang/libclang and protobuf for
-  CoMMA), `CUDA_ARCH`; check that `NCCL_HOME`/`CUDA_HOME`/`MPI_HOME` are found (`build.sh compile` prints them)
-  and that `NCCL_TAG` matches the module's NCCL version (`build.sh` and the experiments warn if not)
-- `submit.sh`: the Slurm options of the machine (partition, QoS, GPUs per node, see
-  [MUSICA queues](https://docs.asc.ac.at/musica/musica_queues.html): GPU nodes `zen4_0768_h100x4`); one can be
-  replaced per submission, e.g. `./submit.sh --qos=dev_zen4_0768_h100x4 experiments/quick.sbatch`
+- `machines/musica.sh`: `module load` lines in `load_modules` (CUDA, NCCL, MPI, cmake; clang/libclang and
+  protobuf for CoMMA), `CUDA_ARCH`; check that `NCCL_HOME`/`CUDA_HOME`/`MPI_HOME` are found (`build.sh compile`
+  prints them) and that `NCCL_TAG` matches the module's NCCL version (`build.sh` and the experiments warn if not)
+- `machines/musica.sh`: the Slurm options of the machine (`SBATCH_OPTIONS`: partition, QoS, GPUs per node, see
+  [MUSICA queues](https://docs.asc.ac.at/musica/musica_queues.html): GPU nodes `zen4_0768_h100x4`); `submit.sh`
+  passes them to sbatch, one can be replaced per submission, e.g.
+  `./submit.sh --qos=dev_zen4_0768_h100x4 experiments/quick.sbatch`
 - `experiments/*.sbatch`: maybe `--time`
 
 ## Usage
@@ -90,14 +97,14 @@ typst compile --root . report/<experiment>/summary.typ    # summary with the fig
 ## DGX Spark cluster
 
 Three DGX Sparks (dgx1, dgx2, dgx3; Ubuntu 24.04, aarch64, one GB10 = sm_121 each), started from dgx1. Differences
-to MUSICA, all in `config.sh` (`MACHINE=spark`) unless stated:
+to MUSICA, all in `machines/spark.sh` unless stated:
 
 - no modules: OpenMPI 5.0.10 from the shared spack (`spack load`, `SPACK_ROOT=/opt/dgx-shared/spack/spack_git`),
   CUDA 13.0 from `/usr/local/cuda`; NCCL is built by `build.sh` from the checkout, pinned to v2.32.3 (as on
   Chameleon; not meant to be comparable with MUSICA's 2.27.7), into `build/nccl/build`. With 2.32 `build.sh` also
   builds the Inspector, the experiments do not use it yet
-- no CoMMA for now: `build.sh` skips it (rust, libclang, protobuf), and the experiments leave out every profiler
-  whose plugin is missing (warning in the output), so `full.sbatch` runs ncclsee only
+- no CoMMA for now: `build.sh` skips it (`BUILD_COMMA=false`; rust, libclang, protobuf), and the experiments leave
+  out every profiler whose plugin is missing (warning in the output), so `full.sbatch` runs ncclsee only
 - no Slurm: `./run-local.sh experiments/<experiment>.sbatch [<iterations>]` instead of `submit.sh`, on dgx1 (in tmux:
   `full` takes about an hour). The `#SBATCH` lines are only comments then; the iterations default to the batch file's
   `--array` (`full`: 3) and run one after the other. Run ids are `spark-<date>-<time>`, e.g.
@@ -151,7 +158,7 @@ Differences to Chameleon:
   workaround) is still set, but NCCL 2.27 does not have this bug or variable
 - 4 ranks per node instead of 1; both benchmarks pick their GPU by the local rank, so every rank has to see all
   GPUs of its node (no per-task GPU binding)
-- launched with `srun` (`LAUNCHER` in `config.sh`) instead of `mpirun`, with several cores per rank (22 in comfort mode): when bound to
+- launched with `srun` (`LAUNCHER` in `machines/musica.sh`) instead of `mpirun`, with several cores per rank (22 in comfort mode): when bound to
   one core, CoMMA's polling thread competes with NCCL's proxy thread (suspected cause of the slow CoMMA runs on
   Chameleon with 2 nodes); `--cpu-bind=verbose` logs the binding in the job output
 - profiler outputs per node in `profiler-out/<profiler>/<test>/<host>/` (shared filesystem; CoMMA's file names
