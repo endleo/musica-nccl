@@ -30,6 +30,13 @@ load_modules_musica() {
     export NCCL_HOME="${NCCL_HOME:-${NCCL_ROOT:-${EBROOTNCCL:-}}}"  # EBROOTNCCL: set by EasyBuild modules
     export CUDA_HOME="${CUDA_HOME:-$(dirname "$(dirname "$(command -v nvcc)")")}"
     export MPI_HOME="${MPI_HOME:-$(dirname "$(dirname "$(command -v mpicc)")")}"
+
+    # launcher for the benchmarks inside the job, one process per task.
+    # --gpu-bind=none: every rank sees all GPUs of its node; both benchmarks pick their GPU by the local rank among
+    # all visible GPUs, so with one GPU per rank (e.g. MUSICA's comfort mode) ranks 1-3 fail ("invalid device ordinal")
+    LAUNCHER="srun --cpu-bind=verbose --gpu-bind=none"
+    # alternative if srun has no matching PMI support for the MPI module:
+    # LAUNCHER="mpirun"
 }
 
 # DGX Sparks: OpenMPI from the shared spack (/opt/dgx-shared), the preinstalled CUDA, and NCCL built by build.sh
@@ -106,23 +113,15 @@ case $MACHINE in
     *) CUDA_ARCH="90" ;;
 esac
 
-# launcher for the benchmarks inside the job, one process per task (MUSICA; on the Sparks set in load_modules_spark,
-# since it needs the MPI path)
-# --gpu-bind=none: every rank sees all GPUs of its node; both benchmarks pick their GPU by the local rank among all
-# visible GPUs, so with one GPU per rank (e.g. MUSICA's comfort mode) ranks 1-3 fail ("invalid device ordinal")
-LAUNCHER="srun --cpu-bind=verbose --gpu-bind=none"
-# alternative if srun has no matching PMI support for the MPI module:
-# LAUNCHER="mpirun"
-
 # ---------------------------------------------------------------------------------------------
-# versions (same as the Chameleon experiment)
+# versions
 # ---------------------------------------------------------------------------------------------
 
 # MUSICA: NCCL itself comes from the module; this checkout is only used for the profiler headers CoMMA builds
 # against (and the sources of the Inspector, which only exists since v2.29.7) -> has to match the module's version.
 # NCCL 2.27 loads profiler plugins up to API v4: fine for CoMMA and ncclsee (v4), but the Inspector (v5 only)
 # cannot be used with it, so build.sh skips it.
-# Sparks: no NCCL module, build.sh builds this checkout (2.32.3, as on Chameleon; not meant to match MUSICA)
+# Sparks: no NCCL module, build.sh builds this checkout (2.32.3)
 case $MACHINE in
     spark) NCCL_TAG="v2.32.3-1" ;;
     *) NCCL_TAG="v2.27.7-1" ;;
@@ -167,7 +166,6 @@ export NCCL_ALLGATHERV_ENABLE=0
 # peer; with subnet-aware routing (NCCL >= 2.32, src/transport/net_ib/connect.cc, default off) the connecting side
 # takes a local HCA on the same subnet as the listener's ports ("NET/IB: Subnet-aware routing: overriding dev" in
 # the NET log)
-# TODO (TODO.md): check in a logging run that NCCL uses the HCAs and that all channels connect
 if [ "$MACHINE" = spark ]; then
     export NCCL_SOCKET_IFNAME=enP7s7
     export NCCL_IB_SUBNET_AWARE_ROUTING=1
