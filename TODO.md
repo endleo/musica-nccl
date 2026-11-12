@@ -5,7 +5,8 @@ Open items per experiment (and general ones first), roughly by priority; done it
 ## General (all experiments)
 
 ### NCCL version / Inspector
-- [ ] Decide between the module's NCCL (2.27.7) and building NCCL ourselves:
+- [ ] MUSICA (the other machines build NCCL 2.32.3 themselves): decide between the module's NCCL (2.27.7) and
+      building NCCL ourselves:
   - module: no NCCL Inspector (needs profiler API v5, NCCL 2.27 loads up to v4), and a different NCCL version
     than on Chameleon (2.32.3), but possibly optimized for the machine (build options, patches, defaults in the
     module environment)
@@ -14,6 +15,16 @@ Open items per experiment (and general ones first), roughly by priority; done it
   - possibly both: compare the module's NCCL with an own build of 2.27.7 without profilers first, to see if
     the module is tuned at all; check the module's environment (`module show`, `NCCL_*` variables it sets)
 - [ ] With NCCL >= 2.29.2: check that the broadcast workaround (`NCCL_ALLGATHERV_ENABLE=0`) is still needed
+
+### MUSICA
+- [ ] ncclsee's race fix (`files/ncclsee/tree-mutex.patch`) was not in the build of runs 1914091 and 1938071
+      (`ncclsee-cpp patch: none` in `job-info.txt`; the patch is applied by `build.sh fetch`): after
+      `./build.sh fetch && ./build.sh compile`, check that the next run has `ncclsee-cpp patch: tree-mutex.patch`
+
+### Tuning analysis for NCCL 2.32.3 (Sparks, Leonardo)
+- [ ] No cost model for NCCL 2.32.3 in `analyze_tuning.py` yet: compare its `ncclTopoGetAlgoTime`
+      (`src/graph/tuning.cc`, `treeCorrectionFactor`) and TUNING table format with 2.27.7's and add it to
+      `COST_MODELS`.
 
 ### Analysis scripts
 - [ ] Review `analysis/` (`analyze_*.py`, `common.py`, `profiler_results.py`) and extend its tests (`analysis/tests/`):
@@ -27,29 +38,9 @@ Open items per experiment (and general ones first), roughly by priority; done it
   - unit tests for the parsers (`job-info.txt`, ncclbench csv, nccl-tests table and header, the profiler
     formats, NCCL's TUNING table), with small fixtures
 
-### Slurm
-- [ ] Switch all batch files in `experiments/` from MUSICA's comfort mode to explicit
-      options with `#ASC --vanilla`, so the batch files state their options without MUSICA-specific defaults;
-      take the values from what comfort mode applied (`scontrol show job` in `job-info.txt`). Known from jobs
-      1863221/1863239: 4 tasks per node, 22 CPUs per task, exclusive, one GPU per task (-> `--gpu-bind=none` in
-      `LAUNCHER`). The explicit options full.sbatch had before (untested): `--ntasks-per-node=4 --exclusive
-      --cpus-per-task=8 --gres=gpu:4`, no per-task GPU binding
-
 ### DGX Spark cluster
-- [ ] First build and quick run on dgx1-3 (`./build.sh`, `./run-local.sh experiments/quick.sbatch`); untested so far:
-      NCCL 2.32.3, nccl-tests, lib-ncclbench and ncclsee with CUDA 13.0 on aarch64, mpirun from spack across the nodes
-- [ ] Network: does NCCL use the RoCE HCAs of the direct links (`NET/IB` in the log of a logging run), and do all
-      channels connect? The links form a ring without a switch and each HCA only reaches one neighbor, while NCCL
-      picks the HCA by the GPU's locality, not by the peer; `NCCL_IB_SUBNET_AWARE_ROUTING=1` (config.sh, as in an
-      earlier run on the Sparks by someone else) should pick the HCA on the peer's subnet instead: check for
-      "Subnet-aware routing: overriding dev" in the NET log. If it does not work: restrict `NCCL_IB_HCA`, or fall back
-      to sockets (`NCCL_IB_DISABLE=1`, then over `NCCL_SOCKET_IFNAME`, which has to reach both neighbors)
-- [ ] CoMMA on the Sparks (rust, libclang, protobuf; skipped in `build.sh` for now)
-- [ ] Tuning analysis for a Spark run: the logging run and the communicator are parameters now, but the Sparks
-      use NCCL 2.32.3, which has no cost model in `analyze_tuning.py` yet: compare its `ncclTopoGetAlgoTime`
-      (`src/graph/tuning.cc`, `treeCorrectionFactor`) and TUNING table format with 2.27.7's and add it to
-      `COST_MODELS`. The variants (`EXPECTED_VARIANTS`) and combinations (`COMBINATIONS`) are still fixed: check
-      them against the TUNING table of the Sparks (3 ranks, one per node; LL128 on sm_121?)
+- [ ] Network: NCCL uses the fast InfiniBand connections for data, but MPI uses the regular network, which causes
+      problems (only really noticeable for smaller messages sizes)
 
 ## Profiler experiment (`full.sbatch`, `quick.sbatch`)
 
@@ -87,8 +78,6 @@ Open items per experiment (and general ones first), roughly by priority; done it
       -> why NCCL picks Ring there: cost model, confirmed in the logging experiment (Tree bandwidth correction
       factor 0.6 up to 2 MiB, 0.8 from 4 MiB); Ring is actually faster there (tuning run 1893400: 15 % at 2 MiB, also
       at 1.5, 3 and 4 MiB)
-- [ ] Tests for the analysis (the Chameleon project has a pytest suite for `profiler_results.py`; this copy
-      only differs in `_profiler_dirs`)
 - [ ] CoMMA's coverage differs between nccl-tests and ncclbench (AllReduce 8-128 KiB, Broadcast 64 KiB-1 MiB,
       `recorded_by_size.pdf`), although NCCL chose the same algorithm, protocol and channels in both; unexplained
       (call pattern? nccl-tests enqueues 20 calls back to back)
@@ -107,8 +96,6 @@ topology/graph dumps (`nccl_logging_env` in `config.sh`); the logs are in the pr
 (`nccl-rank<N>.log`, `topo-rank0.xml`, `graph-rank0.xml` next to `env-rank<N>.txt`). Run 1889653 evaluated in
 `report/logging/summary.typ`; done items below (2026-10-29).
 
-- [ ] `module show NCCL/2.27.7-GCCcore-14.3.0-CUDA-12.9.1` in `job-info.txt` (the log shows that no `NCCL_*`
-      setting reached NCCL from outside, but not what else the module sets)
 - [ ] PXN and CoMMA: rank 2's network send of the 8 B Broadcast is done by the proxy thread of rank 0's process
       (`NET/IB/4(0)`), yet CoMMA records the transfer for rank 2. Check how proxy events of a PXN send are attributed
       (profiler API v4: the proxy op descriptor carries the originating pid/rank?), and whether this is related to
@@ -139,8 +126,6 @@ Run 1893400 evaluated in `report/tuning/summary.typ`; done items below (2026-10-
       ncclsee's per-rank kernel times of the slow vs. fast calls), and whether they also occur without a profiler
 - [ ] AllReduce Ring/LL, round 03 10-21 % slower (64 B - 1 MiB) and Tree/LL128, round 01 5-7 % slower
       (128 KiB - 4 MiB) than the other rounds: single slow runs, or a pattern (needs more rounds/runs)
-- [ ] Second tuning run on other nodes: are the wins over NCCL's choice (AllReduce 4 MiB Ring/LL128, 32-64 MiB
-      Tree/Simple; Broadcast 256-512 KiB LL128, 128 MiB LL128; 4-16 %) a property of the system or of n3010-020/021?
 - [ ] The model's estimates are far from the measured times for combinations NCCL does not pick (Tree/LL above
       128 KiB up to 3.5x, Broadcast LL128/Simple latencies 1.7x/2.7x at 8 B, Broadcast 64 KiB - 32 MiB 0.6-0.85x):
       the TUNING table is printed with one decimal and was taken from the logging run on other nodes; check with a
@@ -153,6 +138,13 @@ Run 1893400 evaluated in `report/tuning/summary.typ`; done items below (2026-10-
       samples, but run time); per-variant test lists if run time matters
 
 ## Done
+
+### 2026-11-12
+- [x] Second tuning run on other nodes (are the wins over NCCL's choice a property of the system or of
+      n3010-020/021?): tuning runs 1911532, 1912206 (8 nodes) and 1914035 (16 nodes) on other nodes; a 2-node
+      repeat is not needed
+- [x] `module show` of the NCCL module in `job-info.txt` (`list_modules` in `machines/musica.sh`; the log shows that
+      no `NCCL_*` setting reached NCCL from outside, but not what else the module sets)
 
 ### 2026-11-05
 - [x] One analysis script per experiment instead of `analyze.py` handing tuning runs on: `analyze_full.py` (profiler

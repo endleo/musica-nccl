@@ -177,9 +177,8 @@ limit have to be set in both:
   that the required ones are set). MUSICA finds the directive anywhere in the file, even inside a comment, so
   batch files in comfort mode must not mention it literally.
 
-The experiments use comfort mode for now (options in `submit.sh`), since that is what worked in the first
-runs; they should switch to vanilla mode with explicit options (TODO.md), so that the batch files state what they
-use without knowledge of MUSICA's defaults.
+The experiments use comfort mode (options in `machines/musica.sh`, with what it chooses), since that is what worked
+in the first runs.
 Either way, `job-info.txt` records what Slurm actually applied (`scontrol show job`, `CUDA_VISIBLE_DEVICES` per
 rank).
 

@@ -15,18 +15,22 @@ BUILD_COMMA=true
 # Slurm options of the machine for submit.sh (each can be replaced there, e.g. --qos=dev_zen4_0768_h100x4 for short
 # test runs). GPU nodes, see https://docs.asc.ac.at/musica/musica_queues.html.
 # MUSICA's comfort mode (the default without the ASC vanilla directive in the batch file, see README): only nodes and
-# GPUs are requested, MUSICA sets the rest. For full GPU nodes (-N X --gres=gpu:4) that is 4 tasks per node, 22 CPUs
-# per task (more than one core per rank matters: bound to a single core, CoMMA's polling thread competes with NCCL's
-# proxy thread), exclusive nodes, all memory; the same options as the working quick run (job 1863239). Every rank
-# sees all GPUs of its node via --gpu-bind=none in LAUNCHER. The applied settings are in the job output and in
-# job-info.txt.
-# TODO (TODO.md): switch to the explicit options and vanilla mode. MUSICA finds the vanilla directive anywhere in a
-# batch file, even in a comment, so the batch files must not mention it literally while in comfort mode
+# GPUs are requested, MUSICA sets the rest. For full GPU nodes (-N X --gres=gpu:4) it chooses (scontrol show job in
+# job-info.txt, e.g. quick runs 1863239 and 1938071):
+#   - 4 tasks per node, 22 CPUs per task (more than one core per rank matters: bound to a single core, CoMMA's
+#     polling thread competes with NCCL's proxy thread)
+#   - one GPU per task (TresPerTask=gres/gpu=1, TresBind=gres/gpu:single:1); overridden by --gpu-bind=none in
+#     LAUNCHER, so that every rank sees all GPUs of its node
+#   - exclusive nodes, all memory
+# MUSICA finds the vanilla directive anywhere in a batch file, even in a comment, so the batch files must not mention
+# it literally while in comfort mode
 declare -gA SBATCH_OPTIONS=([partition]=zen4_0768_h100x4 [qos]=zen4_0768_h100x4 [gres]=gpu:4)
+
+NCCL_MODULE=NCCL/2.27.7-GCCcore-14.3.0-CUDA-12.9.1
 
 load_modules() {
     module purge
-    module load NCCL/2.27.7-GCCcore-14.3.0-CUDA-12.9.1
+    module load "$NCCL_MODULE"
     module load gompi/2025b
     module load protobuf/31.1-GCCcore-14.3.0
     module load LLVM/20.1.8-GCCcore-14.3.0
@@ -48,4 +52,7 @@ load_modules() {
 
 list_modules() {
     module list 2>&1
+    # what the NCCL module sets besides the paths (e.g. NCCL_* variables)
+    echo; echo "module show $NCCL_MODULE:"
+    module show "$NCCL_MODULE" 2>&1
 }
