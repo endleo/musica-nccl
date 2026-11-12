@@ -24,6 +24,7 @@ exists since NCCL 2.29.7). CoMMA and ncclsee use v4 and work.
 config.sh             shared settings: machine detection, versions, paths, profiler environment
 machines/             settings per machine: modules, GPU arch, NCCL version, launcher, Slurm options
   musica.sh
+  leonardo.sh         untested, Slurm options not filled in yet
   spark.sh
 submit.sh             submits a batch file with the machine's Slurm options
 build.sh              clones and builds everything into build/

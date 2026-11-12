@@ -5,7 +5,8 @@
 # environment
 # ---------------------------------------------------------------------------------------------
 
-# The machine: musica (x86_64, H100, Slurm, modules) or spark (3 DGX Sparks dgx1-3, aarch64, GB10, no Slurm, spack).
+# The machine: musica (x86_64, H100, Slurm, modules), leonardo (x86_64, A100, Slurm, modules) or spark (3 DGX Sparks
+# dgx1-3, aarch64, GB10, no Slurm, spack).
 # Its settings are in machines/<machine>.sh (sourced at the end of this file), which defines:
 #   CUDA_ARCH        GPU architecture to compile for, e.g. 90
 #   NCCL_TAG         NCCL checkout: the profiler headers, and NCCL itself where build.sh builds it
@@ -24,6 +25,7 @@ detect_machine() {
     cluster="${SLURM_CLUSTER_NAME:-$(scontrol show config 2>/dev/null | awk '$1 == "ClusterName" {print $3}')}"
     case $cluster in
         vie-musica) echo musica ;;
+        leonardo) echo leonardo ;;
         "")
             if [ "$(uname -m)" = aarch64 ]; then
                 echo spark

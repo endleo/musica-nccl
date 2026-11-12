@@ -16,8 +16,10 @@ usage() {
 }
 
 # the machine's options (SBATCH_OPTIONS in machines/<machine>.sh), copied: the overrides below change them
-[ "${#SBATCH_OPTIONS[@]}" -gt 0 ] \
-    || { echo "no Slurm options for $MACHINE (machines/$MACHINE.sh); without Slurm: ./run-local.sh" >&2; exit 1; }
+if [ "${#SBATCH_OPTIONS[@]}" -eq 0 ]; then
+    echo "no SBATCH_OPTIONS in machines/$MACHINE.sh (not filled in yet; without Slurm: ./run-local.sh)" >&2
+    exit 1
+fi
 declare -A machine_options
 for name in "${!SBATCH_OPTIONS[@]}"; do
     machine_options[$name]=${SBATCH_OPTIONS[$name]}
