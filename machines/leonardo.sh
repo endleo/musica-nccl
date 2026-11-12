@@ -26,7 +26,6 @@ declare -gA SBATCH_OPTIONS=([partition]=boost_usr_prod [qos]=normal [gres]=gpu:4
 RESULTS_DIR="$WORK/musica-nccl/results"
 
 load_modules() {
-    # module purge also unloads profile/base, which makes the modules below visible
     module purge
     module load profile/base     # probably not necessary (not affected by purge), but just to be safe
     module load gcc/12.2.0       # the system GCC (RHEL 8) is 8.5, too old for ncclsee-cpp
