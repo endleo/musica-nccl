@@ -59,9 +59,10 @@ Check the settings (filled in for MUSICA):
 - `config.sh`: `module load` lines in `load_modules` (CUDA, NCCL, MPI, cmake; clang/libclang and protobuf for
   CoMMA), `CUDA_ARCH`; check that `NCCL_HOME`/`CUDA_HOME`/`MPI_HOME` are found (`build.sh compile` prints them)
   and that `NCCL_TAG` matches the module's NCCL version (`build.sh` and the experiments warn if not)
-- `experiments/*.sbatch` and `build.sh`: maybe `--time` (partition, account and QoS are set, see
-  [MUSICA queues](https://docs.asc.ac.at/musica/musica_queues.html): GPU nodes `zen4_0768_h100x4` for the
-  experiments, with QoS `dev_zen4_0768_h100x4` for `quick.sbatch`; CPU nodes `zen4_0768` for `build.sh`)
+- `submit.sh`: the Slurm options of the machine (partition, QoS, GPUs per node, see
+  [MUSICA queues](https://docs.asc.ac.at/musica/musica_queues.html): GPU nodes `zen4_0768_h100x4`); one can be
+  replaced per submission, e.g. `./submit.sh --qos=dev_zen4_0768_h100x4 experiments/quick.sbatch`
+- `experiments/*.sbatch`: maybe `--time`
 
 ## Usage
 
@@ -69,10 +70,9 @@ On the cluster (from the repository root, everything relative to it):
 
 ```sh
 git clone <this repo> musica-nccl && cd musica-nccl
-./build.sh                  # or: ./build.sh fetch && sbatch build.sh compile
-                            # after changing modules: ./build.sh clean && ./build.sh compile
-sbatch experiments/quick.sbatch
-sbatch experiments/full.sbatch
+./build.sh                  # after changing modules: ./build.sh clean && ./build.sh compile
+./submit.sh experiments/quick.sbatch
+./submit.sh experiments/full.sbatch
 ```
 
 Locally:
@@ -98,7 +98,7 @@ to MUSICA, all in `config.sh` (`MACHINE=spark`) unless stated:
   builds the Inspector, the experiments do not use it yet
 - no CoMMA for now: `build.sh` skips it (rust, libclang, protobuf), and the experiments leave out every profiler
   whose plugin is missing (warning in the output), so `full.sbatch` runs ncclsee only
-- no Slurm: `./run-local.sh experiments/<experiment>.sbatch [<iterations>]` instead of `sbatch`, on dgx1 (in tmux:
+- no Slurm: `./run-local.sh experiments/<experiment>.sbatch [<iterations>]` instead of `submit.sh`, on dgx1 (in tmux:
   `full` takes about an hour). The `#SBATCH` lines are only comments then; the iterations default to the batch file's
   `--array` (`full`: 3) and run one after the other. Run ids are `spark-<date>-<time>`, e.g.
   `results/full/spark-20261104-153000/01/`, so they cannot clash with MUSICA's job ids in a `results/` fetched from
@@ -137,7 +137,7 @@ lib-ncclbench `ncclAllReduce` / `ncclBroadcast`, on 2 nodes with 4 ranks each (o
 Iterations are Slurm array tasks: `#SBATCH --array=1-3%1` in `full.sbatch` submits the experiment as 3
 separate tasks (iterations 01, 02, 03), each running the whole experiment (all profilers and tests) on the nodes it
 gets; `%1` lets only one of them run at a time. Other counts on the command line, e.g.
-`sbatch --array=1-5%1 experiments/full.sbatch`. This is the counterpart of the repeated `run_benchmark` calls with
+`./submit.sh --array=1-5%1 experiments/full.sbatch`. This is the counterpart of the repeated `run_benchmark` calls with
 fresh servers on Chameleon.
 
 A new experiment is a copy of one of the batch files with other parameters and another `EXPERIMENT` name (the
@@ -169,9 +169,9 @@ limit have to be set in both:
   that the required ones are set). MUSICA finds the directive anywhere in the file, even inside a comment, so
   batch files in comfort mode must not mention it literally.
 
-The experiments (`quick.sbatch`, `full.sbatch`) use comfort mode for now, since that is what worked in the first
+The experiments use comfort mode for now (options in `submit.sh`), since that is what worked in the first
 runs; they should switch to vanilla mode with explicit options (TODO.md), so that the batch files state what they
-use without knowledge of MUSICA's defaults. `build.sh` uses vanilla mode with explicit options.
+use without knowledge of MUSICA's defaults.
 Either way, `job-info.txt` records what Slurm actually applied (`scontrol show job`, `CUDA_VISIBLE_DEVICES` per
 rank).
 

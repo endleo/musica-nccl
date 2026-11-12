@@ -4,17 +4,13 @@
 # ncclbench with ncclsee (to check per call which algorithm/protocol was actually used), 8 B - 1 GiB. All variants
 # run in one job on the same nodes, in 3 rounds, each round runs every variant once (order rotated per round, see
 # experiment.sh); results in results/tuning/<job>/<round>/<variant>/.
-# Submit from the repository root: sbatch experiments/tuning.sbatch
+# Submit: ./submit.sh experiments/tuning.sbatch
 # (DGX Sparks, no Slurm: ./run-local.sh experiments/tuning.sbatch)
-#
-# Slurm options as in full.sbatch (MUSICA's comfort mode, see there)
+# Slurm options of the machine (partition, QoS, GPUs per node; MUSICA's comfort mode): submit.sh
 #SBATCH --job-name=tuning
 #SBATCH --nodes=2
-#SBATCH --gres=gpu:4
 #SBATCH --time=01:00:00
 #SBATCH --output=logs/%x_%j.out
-#SBATCH --partition=zen4_0768_h100x4
-#SBATCH --qos=zen4_0768_h100x4
 
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"  # without Slurm: run-local.sh
 source ./experiment.sh

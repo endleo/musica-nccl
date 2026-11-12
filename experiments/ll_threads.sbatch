@@ -20,17 +20,13 @@
 # Only Broadcast, 1 KiB - 1 MiB (powers of two and 1.5x in between).
 # Results in results/ll_threads/<job>/<round>/<variant>/ (as experiments/tuning.sbatch; analysis/analyze_tuning.py
 # expects the tuning variants and does not read this experiment).
-# Submit from the repository root: sbatch experiments/ll_threads.sbatch (the effect grows with the number of nodes;
-# 8 nodes for the numbers above: sbatch --nodes=8 ...)
-#
-# Slurm options as in full.sbatch (MUSICA's comfort mode, see there)
+# Submit: ./submit.sh experiments/ll_threads.sbatch (the effect grows with the number of nodes; 8 nodes for the
+# numbers above: ./submit.sh --nodes=8 ...)
+# Slurm options of the machine (partition, QoS, GPUs per node; MUSICA's comfort mode): submit.sh
 #SBATCH --job-name=ll_threads
 #SBATCH --nodes=16
-#SBATCH --gres=gpu:4
 #SBATCH --time=01:00:00
 #SBATCH --output=logs/%x_%j.out
-#SBATCH --partition=zen4_0768_h100x4
-#SBATCH --qos=zen4_0768_h100x4
 
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"  # without Slurm: run-local.sh
 source ./experiment.sh

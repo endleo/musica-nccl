@@ -22,17 +22,13 @@
 # from 1.5 MiB to 24 MiB around the kinks.
 # Results in results/ll128_chunks/<job>/<round>/<variant>/ (as experiments/tuning.sbatch; analysis/analyze_tuning.py
 # expects the tuning variants and does not read this experiment, see analysis/analyze_anomaly_checks.py).
-# Submit from the repository root: sbatch experiments/ll128_chunks.sbatch (the effect grows with the number of
-# nodes, so run with >= 8, e.g. sbatch --nodes=8 ...)
-#
-# Slurm options as in full.sbatch (MUSICA's comfort mode, see there)
+# Submit: ./submit.sh experiments/ll128_chunks.sbatch (the effect grows with the number of nodes, so run with
+# >= 8, e.g. ./submit.sh --nodes=8 ...)
+# Slurm options of the machine (partition, QoS, GPUs per node; MUSICA's comfort mode): submit.sh
 #SBATCH --job-name=ll128_chunks
 #SBATCH --nodes=16
-#SBATCH --gres=gpu:4
 #SBATCH --time=01:00:00
 #SBATCH --output=logs/%x_%j.out
-#SBATCH --partition=zen4_0768_h100x4
-#SBATCH --qos=zen4_0768_h100x4
 
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"  # without Slurm: run-local.sh
 source ./experiment.sh

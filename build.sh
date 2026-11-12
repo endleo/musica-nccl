@@ -1,15 +1,15 @@
 # Fetches and builds nccl-tests, lib-ncclbench and the profiler plugins into build/ (versions in config.sh),
 # against the NCCL, CUDA and MPI of the modules. On the DGX Sparks (MACHINE=spark, config.sh) NCCL itself is built
 # too, and CoMMA is left out for now (its build needs rust, libclang and protobuf). Run from the repository root:
-#   ./build.sh                  fetch + compile (on a login node)
+#   ./build.sh                  fetch + compile
 #   ./build.sh fetch            only download sources, rust and crates (needs internet)
-#   sbatch build.sh compile     compile on a compute node (after fetch, e.g. if the login node has no nvcc)
+#   ./build.sh compile          only compile (after fetch)
 #   ./build.sh clean            remove the build outputs (keeps sources, rust and crates; on the Sparks also NCCL's),
 #                               e.g. after changing modules: make and cmake do not notice that, and cmake keeps the
 #                               CUDA it found in its cache
 
 set -eo pipefail
-cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")}"
+cd "$(dirname "$0")"
 source ./config.sh
 
 clone() {  # clone <url> <directory> <commit or tag>
@@ -53,7 +53,7 @@ fetch() {
 compile() {
     load_modules
     [ -n "$CUDA_ARCH" ] || { echo "CUDA_ARCH is not set (config.sh)" >&2; exit 1; }
-    local jobs=${SLURM_CPUS_PER_TASK:-8}
+    local jobs=8  # not more: compiles on the login node
     # no NCCL module on the Sparks: built from the checkout, into NCCL_HOME (nccl/build)
     if [ "$MACHINE" = spark ] && [ "$NCCL_HOME" = "$BUILD_DIR/nccl/build" ]; then
         compile_nccl
