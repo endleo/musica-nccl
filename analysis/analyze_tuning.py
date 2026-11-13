@@ -161,6 +161,8 @@ def run_problems(info, what):
                         "model is read from rank 0's node)")
     if not info["ranks"]:
         problems.append(f"{what}: no ranks in job-info.txt (GPUs visible per rank)")
+    if nccl in COST_MODELS and (env := sorted(set(info["nccl_env"]) & COST_MODELS[nccl].unsupported_env)):
+        problems.append(f"{what}: {env} set in the job environment, not modelled for NCCL {nccl} (COST_MODELS)")
     return problems
 
 
@@ -273,17 +275,35 @@ def matching_logging_run(run, results=None):
 
 @dataclass(frozen=True)
 class Communicator:
-    """what NCCL's cost model uses besides the TUNING table (ncclComm: nRanks, nNodes, nChannels, minCompCap)"""
+    """
+    what NCCL's cost model uses besides the TUNING table (ncclComm: nRanks, nNodes, nChannels, minCompCap; the path
+    types typeIntra/typeInter of the Tree and Ring graphs, as ((algo, intra, inter), ...) with NCCL's names, "NVL",
+    "PXB", ...)
+    """
     ranks: int
     nodes: int
     channels: int
     min_comp_cap: int
+    graph_types: tuple
+
+    def path_types(self, algo):
+        """(typeIntra, typeInter) of the graph of an algorithm, as indexes into PATH_TYPES"""
+        intra, inter = next((i, o) for a, i, o in self.graph_types if a == algo)
+        return PATH_TYPES.index(intra), PATH_TYPES.index(inter)
+
+
+# NCCL's path types in order (src/include/graph.h PATH_*, names of topoPathTypeStr; the same in 2.27.7 and 2.32.3)
+PATH_TYPES = ["LOC", "NVL", "NVB", "C2C", "PIX", "PXB", "P2C", "PXN", "PHB", "SYS", "NET", "DIS"]
+# graph patterns of the log's "Pattern <p>, ... type <intra>/<inter>" lines (NCCL_TOPO_PATTERN_*): balanced, split
+# and plain tree are graphs[NCCL_ALGO_TREE], ring is graphs[NCCL_ALGO_RING]
+GRAPH_PATTERNS = {1: "tree", 2: "tree", 3: "tree", 4: "ring"}
 
 
 def logging_communicator(logging_dir):
     """
     the communicator of the logging run's AllReduce test: ranks and nodes from rank 0's NCCL log ("comm ... nRanks
-    <n> nNodes <n>"), channels from its ring setup ("Channel 00/<n>"), compute capability from its topology dump
+    <n> nNodes <n>"), channels from its ring setup ("Channel 00/<n>"), the path types of the Tree and Ring graphs
+    from its graph search ("Pattern <p>, ... type <intra>/<inter>"), compute capability from its topology dump
     (sm of the GPUs of rank 0's node; one GPU type per run, see run_problems); aborts if something is missing
     """
     root = pr.extract_profiler_outputs(logging_dir) / "profiler-out" / "ncclsee" / "all_reduce_bench"
@@ -291,16 +311,24 @@ def logging_communicator(logging_dir):
     text = log.read_text() if log else ""
     comm = re.search(r"NCCL INFO comm \S+ rank 0 nRanks (\d+) nNodes (\d+)", text)
     channels = re.search(r"NCCL INFO Channel \d+/(\d+) :", text)
+    graphs = {}
+    for p, intra, inter in re.findall(r"NCCL INFO Pattern (\d+), .* type (\w+)/(\w+),", text):
+        if int(p) in GRAPH_PATTERNS:
+            graphs.setdefault(GRAPH_PATTERNS[int(p)], (intra, inter))  # the first graph per algorithm
     sms = [int(s) for s in re.findall(r'<gpu [^>]*\bsm="(\d+)"', topo.read_text())] if topo else []
     problems = [p for p, ok in [
         (f"logging run: no nccl-rank0.log in {root}", log),
         ("logging run: no 'comm ... nRanks <n> nNodes <n>' line in nccl-rank0.log", comm or not log),
         ("logging run: no 'Channel <i>/<n>' line in nccl-rank0.log", channels or not log),
+        (f"logging run: no 'Pattern <p>, ... type <intra>/<inter>' lines of the graphs {ALGOS} in nccl-rank0.log "
+         f"(found {sorted(graphs)})", set(graphs) == set(ALGOS) or not log),
+        (f"logging run: unknown path types in the graphs {graphs}",
+         all(t in PATH_TYPES for types in graphs.values() for t in types)),
         (f"logging run: no topo-rank0.xml with the GPUs' compute capability (sm) in {root}", sms)] if not ok]
     if problems:
         _abort(logging_dir, problems)
     return Communicator(ranks=int(comm.group(1)), nodes=int(comm.group(2)), channels=int(channels.group(1)),
-                        min_comp_cap=min(sms))
+                        min_comp_cap=min(sms), graph_types=tuple((a, *graphs[a]) for a in ALGOS))
 
 
 def check_communicator(run, choices, table, comm, nodes):
@@ -427,7 +455,8 @@ def model_table(logging_dir):
     """
     {(operation, algo, proto): (latency [us], bandwidth [GB/s])} from the TUNING table in rank 0's log of the
     logging run (iteration folder; first block: Tree, Ring, CollNetDirect, each LL/LL128/Simple; printed with one
-    decimal). Format of NCCL 2.27.7
+    decimal). Format of NCCL 2.27.7 and 2.32.3; combinations without bandwidth (2.27.7: 0, also for the disabled
+    ones; 2.32.3: -1 for those without a model, e.g. Tree Broadcast) are left out
     """
     log = next((pr.extract_profiler_outputs(logging_dir) / "profiler-out" / "ncclsee" / "all_reduce_bench")
                .glob("*/nccl-rank0.log"))
@@ -469,11 +498,86 @@ def model_time_2_27_7(table, comm, operation, algo, proto, nbytes):
     return lat + nbytes / (1000 * bw)
 
 
-# NCCL versions with a cost model here (job-info.txt's "NCCL:" version -> time of one call); runs with other
-# versions are refused (run_problems). Another version: compare its ncclTopoGetAlgoTime (src/graph/tuning.cc,
-# treeCorrectionFactor) and the format of its TUNING table (model_table) with 2.27.7's; add it here with
-# model_time_2_27_7 if they are the same, else with a function of its own
-COST_MODELS = {"2.27.7": model_time_2_27_7}
+def enabled_2_27_7(table, comm):
+    """
+    NCCL 2.27.7: the combinations NCCL chooses from without NCCL_ALGO/NCCL_PROTO are those of the TUNING table
+    (ncclTopoTuneModel sets the bandwidth of disabled ones, e.g. LL128 where it is not supported, to 0)
+    """
+    return set(table)
+
+
+def model_time_2_32_3(table, comm, operation, algo, proto, nbytes):
+    """
+    NCCL 2.32.3's estimated time [us] of one call: ncclTuningTreeModelSim (src/tuning/tree.cc) and
+    ncclTuningRingModelSim (src/tuning/ring.cc) with ncclTuningGetTime (src/tuning/tuning_general.cc), numPipeOps = 1
+    as in ncclbench --blocking (latCount = 1, no fp8 precision factor); NaN if the combination is not available.
+    The same as 2.27.7 except for the Ring/Simple plateau, which 2.32.3 also applies within one node on Blackwell
+    with NVLink (scaled by the ring steps and bytes per rank and channel). treeCorrectionFactor has a 24th entry,
+    still unused (logSize < 23)
+    """
+    if (operation, algo, proto) not in table:
+        return np.nan
+    lat, bw = table[(operation, algo, proto)]
+    log_size = int(np.floor(np.log2(nbytes >> 6))) if nbytes >> 6 > 0 else -1
+    if algo == "tree" and operation == "all_reduce" and 0 <= log_size < 23:
+        bw *= TREE_CORRECTION_2_27_7[proto][log_size]  # unchanged values (src/tuning/cost_model.cc)
+    blackwell_nvlink = comm.min_comp_cap >= 100 and comm.path_types("ring")[0] == PATH_TYPES.index("NVL")
+    # operations of this module: only AllReduce has the plateau (2.32.3 also AllGather/ReduceScatter on Blackwell)
+    plateau = operation == "all_reduce" and (comm.nodes > 1 or blackwell_nvlink)
+    per_rank_channel = nbytes // (comm.channels * comm.ranks)
+    if algo == "ring" and proto == "simple" and plateau and per_rank_channel >= 64:
+        factor = 1.9 if comm.min_comp_cap < 80 else 1.4
+        if comm.nodes == 1 and blackwell_nvlink:
+            delta, max_delta = 0.1, factor - 1
+            steps = 2 * (comm.ranks - 1)  # ncclTuningGetNsteps of AllReduce
+            step_scale = 1 - (delta / max_delta) ** max(0, steps - 1)
+            effective = max_delta
+            if per_rank_channel > 256 * 1024:
+                effective -= delta * min(1.0, (per_rank_channel - 256 * 1024) / (256 * 1024))
+            factor = 1 + step_scale * effective
+        lat *= factor  # "plateau effect of ring"
+    return lat + nbytes / (1000 * bw)
+
+
+def enabled_2_32_3(table, comm):
+    """
+    NCCL 2.32.3: the combinations NCCL chooses from without NCCL_ALGO/NCCL_PROTO. Unlike 2.27.7 the TUNING table
+    also lists the disabled ones (the enable flags are separate, tuningContext.enabled), so isLL128Enabled
+    (src/tuning/cost_model.cc) is redone here with the graphs' path types: LL128 needs typeInter <= PXB (Hopper and
+    later with NCCL_LL128_C2C=1, the default: <= PXN; the Rubin driver condition is left out) and typeIntra <= NVB,
+    and compute capability >= 70 (one GPU type per run, see run_problems; the CUDA 11.8 / H100 / 2 ranks exception
+    does not apply to the runs here). NCCL_ALGO, NCCL_PROTO and NCCL_LL128_C2C in the job environment are refused
+    (unsupported_env)
+    """
+    def ll128(algo):
+        intra, inter = comm.path_types(algo)
+        max_inter = "PXN" if comm.min_comp_cap >= 90 else "PXB"
+        return inter <= PATH_TYPES.index(max_inter) and intra <= PATH_TYPES.index("NVB") and comm.min_comp_cap >= 70
+    return {(op, a, p) for op, a, p in table if p != "ll128" or ll128(a)}
+
+
+@dataclass(frozen=True)
+class NcclCostModel:
+    """
+    the cost model of one NCCL version: time(table, comm, operation, algo, proto, nbytes) -> estimate [us] of one
+    call (also for combinations NCCL only uses when pinned), enabled(table, comm) -> {(operation, algo, proto)}
+    NCCL chooses from by itself, and the NCCL_* variables of the job environment that would change NCCL's choice
+    in a way the model does not follow (run_problems refuses runs with them)
+    """
+    time: object
+    enabled: object
+    unsupported_env: frozenset = frozenset()
+
+
+# NCCL versions with a cost model here (job-info.txt's "NCCL:" version); runs with other versions are refused
+# (run_problems). Another version: compare its cost model (2.27.7: ncclTopoGetAlgoTime and ncclTopoTuneModel in
+# src/graph/tuning.cc; 2.32.3: src/tuning/), the format of its TUNING table (model_table) and how it marks disabled
+# combinations with those here; reuse the functions if they are the same, else add ones of its own
+COST_MODELS = {
+    "2.27.7": NcclCostModel(time=model_time_2_27_7, enabled=enabled_2_27_7),
+    "2.32.3": NcclCostModel(time=model_time_2_32_3, enabled=enabled_2_32_3,
+                            unsupported_env=frozenset({"NCCL_ALGO", "NCCL_PROTO", "NCCL_LL128_C2C"})),
+}
 
 
 @dataclass(frozen=True)
@@ -484,15 +588,26 @@ class CostModel:
     comm: Communicator
 
     def time(self, operation, algo, proto, nbytes):
-        return COST_MODELS[self.nccl](self.table, self.comm, operation, algo, proto, nbytes)
+        return COST_MODELS[self.nccl].time(self.table, self.comm, operation, algo, proto, nbytes)
+
+    @property
+    def enabled(self):
+        """{(operation, algo, proto)} NCCL chooses from by itself (the pinned variants can use the others)"""
+        return COST_MODELS[self.nccl].enabled(self.table, self.comm)
 
 
 def model_estimates(model, sizes):
-    """estimates of every available combination: operation, size_bytes, algo, proto, estimate_us, model_choice"""
-    rows = [{"operation": op, "size_bytes": s, "algo": a, "proto": p, "estimate_us": model.time(op, a, p, s)}
+    """
+    estimates of every available combination: operation, size_bytes, algo, proto, estimate_us, enabled (NCCL
+    chooses from it by itself), model_choice (minimum estimate of the enabled ones)
+    """
+    enabled = model.enabled
+    rows = [{"operation": op, "size_bytes": s, "algo": a, "proto": p, "estimate_us": model.time(op, a, p, s),
+             "enabled": (op, a, p) in enabled}
             for op, combos in COMBINATIONS.items() for s in sizes for a, p in combos]
     est = pd.DataFrame(rows)
-    best = est.loc[est.groupby(["operation", "size_bytes"])["estimate_us"].idxmin()]
+    on = est[est["enabled"]]
+    best = on.loc[on.groupby(["operation", "size_bytes"])["estimate_us"].idxmin()]
     est["model_choice"] = est.merge(best[["operation", "size_bytes", "algo", "proto"]], how="left",
                                     on=["operation", "size_bytes", "algo", "proto"], indicator=True)["_merge"].eq("both")
     return est
@@ -637,7 +752,10 @@ def comparison_text(comp, run, model, logging_dir):
             f"estimate: NCCL {model.nccl}'s cost model with the TUNING table of logging run "
             f"{logging_dir.parent.name}; pct: share of the "
             "measured calls faster than the estimate (0 = the estimate is below every call); est/med: estimate / "
-            "measured median; default: NCCL's choice, with the estimate of the combination it used", ""]
+            "measured median; default: NCCL's choice, with the estimate of the combination it used"]
+    off = sorted({(o, a, p) for o, a, p in model.table} - model.enabled)
+    text += [f"not chosen by NCCL by itself (only pinned): "
+             f"{', '.join(f'{pr.OPERATION_LABELS[o]} {combination_label(a, p)}' for o, a, p in off) or '-'}", ""]
     for operation in TESTS.values():
         sel = comp[comp["operation"] == operation]
         combos = [("default", "default")] + COMBINATIONS[operation]
@@ -929,7 +1047,9 @@ def best_text(pvd, comp, noise, run, rounds):
     """per size: NCCL's choice and the fastest measured combination (median over all `rounds` rounds)"""
     text = [f"NCCL's choice vs. the fastest combination (median over all rounds, us), {label(run)}",
             "ratio: fastest / NCCL's choice; rounds: in how many rounds it was faster (round medians); model rank: "
-            "rank of the fastest by NCCL's estimate (1 = NCCL's choice); = : the fastest is NCCL's choice itself",
+            "rank of the fastest by NCCL's estimate among the combinations NCCL chooses from (1 = NCCL's choice; off = "
+            "NCCL does not choose it by itself, e.g. LL128 where NCCL disables it); = : the fastest is NCCL's choice "
+            "itself",
             "noise: largest deviation between two runs of the same configuration in the same round (NCCL's own "
             "combination pinned vs. default; Broadcast also tree_* vs. default); * = faster in all rounds and by more "
             "than the noise", ""]
@@ -942,8 +1062,10 @@ def best_text(pvd, comp, noise, run, rounds):
             c = comp[(comp["operation"] == op) & (comp["size_bytes"] == size)]
             d = c[c["algo"] == "default"].iloc[0]
             best = g.loc[g["median_us"].idxmin()]
-            ranked = c[c["algo"] != "default"].sort_values("estimate_us")
-            rank = [(a, p) for a, p in zip(ranked["algo"], ranked["proto"])].index((best["algo"], best["proto"])) + 1
+            ranked = c[(c["algo"] != "default") & c["enabled"].astype(bool)].sort_values("estimate_us")
+            ranked = [(a, p) for a, p in zip(ranked["algo"], ranked["proto"])]
+            rank = ranked.index((best["algo"], best["proto"])) + 1 if (best["algo"], best["proto"]) in ranked \
+                else "off"
             mark = "=" if best["same"] else ("*" if best.name in fast.index else "")
             text.append(f"  {pr.size_label(int(size)):<10}{combination_label(d['used_algo'], d['used_proto']):<13}"
                         f"{d['median_us']:>9.1f}  {combination_label(best['algo'], best['proto']) + ' ' + mark:<14}"
@@ -964,7 +1086,8 @@ def analyze(run, logging_run):
     choices = load_choices(run)
     comm = logging_communicator(logging_dir)
     model = CostModel(nccl=nccl_version(info), table=model_table(logging_dir), comm=comm)
-    print(f"cost model: NCCL {model.nccl}, {comm}")
+    print(f"cost model: NCCL {model.nccl}, {comm}, NCCL chooses from "
+          f"{sorted(model.enabled)}")
     check_communicator(run, choices, model.table, comm, nodes=len(info["gpus"]))
     df = load_times(run)
     bench = benchmark_times(df)
