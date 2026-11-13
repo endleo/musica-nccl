@@ -14,6 +14,11 @@
 #   VARIANT_ENV       associative array <variant> -> environment of its runs, e.g. ([ring]="NCCL_ALGO=allreduce:ring");
 #                     a variant without an entry runs with the job's environment
 #   ROUNDS            number of rounds (default 1)
+#   STEP_TIMEOUT      time limit of every benchmark run (timeout(1) syntax, e.g. 10m), so a hanging run fails on its
+#                     own instead of using up the job; unset: no limit
+# Variants that pin a protocol of the machine's UNSUPPORTED_PROTOCOLS (machines/*.sh) are skipped (and listed in
+# job-info.txt); an experiment that needs such a protocol checks protocol_supported itself.
+# A failed benchmark run (non-zero exit, or STEP_TIMEOUT) is listed in failed.txt of its output folder.
 # and then calls run_experiment, which runs every test once per profiler (and variant).
 
 source ./config.sh || exit 1
@@ -26,16 +31,60 @@ powers_of_two() {
     done
 }
 
+# protocols an NCCL_PROTO value enables explicitly, lower case, one per line: "allreduce:LL;broadcast:LL128" -> ll,
+# ll128 (syntax: experiments/tuning.sbatch). Exclusions ("^LL128") enable nothing explicitly and are left out
+pinned_protocols() {
+    local entry list entries
+    IFS=';' read -ra entries <<< "$1"
+    for entry in "${entries[@]}"; do
+        list=${entry##*:}
+        [[ $list == ^* ]] && continue
+        tr ',' '\n' <<< "${list,,}"
+    done
+}
+
+# protocol_supported <protocol>: true unless the protocol is in the machine's UNSUPPORTED_PROTOCOLS (any case)
+protocol_supported() {
+    local p
+    for p in "${UNSUPPORTED_PROTOCOLS[@]}"; do
+        [ "${p,,}" = "${1,,}" ] && return 1
+    done
+    return 0
+}
+
+# the unsupported protocols (UNSUPPORTED_PROTOCOLS) an environment pins, space-separated, empty if none; the
+# environment as in VARIANT_ENV: "NCCL_ALGO=... NCCL_PROTO=..."
+unsupported_pins() {
+    local assignment p out=()
+    for assignment in $1; do
+        [[ $assignment == NCCL_PROTO=* ]] || continue
+        for p in $(pinned_protocols "${assignment#NCCL_PROTO=}"); do
+            protocol_supported "$p" || out+=("$p")
+        done
+    done
+    [ ${#out[@]} -eq 0 ] || printf '%s\n' "${out[@]}" | sort -u | paste -sd' '
+}
+
 # run <profiler> <test> <benchmark command...>; output in $OUT/<test>_<profiler>.out, with the environment of the
 # current variant ($variant_env, word-split into assignments for env). Set per rank, behind the launcher: mpirun
-# (Sparks) does not pass the environment on to the other nodes
+# (Sparks) does not pass the environment on to the other nodes. With STEP_TIMEOUT, timeout(1) stops the launcher
+# (srun and mpirun pass SIGTERM on to the ranks; SIGKILL a minute later if that does not end them). A failure is
+# appended to $OUT/failed.txt (the analysis leaves such variants out)
 run() {
-    local profiler=$1 test=$2
+    local profiler=$1 test=$2 status=0 guard=() reason
     shift 2
+    [ -n "$STEP_TIMEOUT" ] && guard=(timeout --kill-after=60 "$STEP_TIMEOUT")
     echo "[$(date +%T)] $test ($profiler${variant:+, $variant})"
-    $LAUNCHER env LOG_NCCL="$LOG_NCCL" $variant_env \
+    "${guard[@]}" $LAUNCHER env LOG_NCCL="$LOG_NCCL" $variant_env \
         ./profiled.sh "$profiler" "$OUT/profiler-out/$profiler/$test" "$@" > "$OUT/${test}_$profiler.out" \
-        || { echo "FAILED: $test ($profiler${variant:+, $variant})"; failed=1; }
+        || status=$?
+    if [ "$status" -ne 0 ]; then
+        reason="exit status $status"
+        [ "$status" -eq 124 ] && reason="timed out after $STEP_TIMEOUT (STEP_TIMEOUT)"
+        echo "FAILED: $test ($profiler${variant:+, $variant}): $reason"
+        echo "$test $profiler: $reason" >> "$OUT/failed.txt"
+        failed=1
+    fi
 }
 
 write_job_info() {
@@ -55,6 +104,11 @@ write_job_info() {
     echo "nccl-tests: ${NCCL_TESTS[*]}, args: $NCCL_TESTS_ARGS"
     echo "ncclbench: ${!NCCLBENCH_TESTS[*]}, args: $NCCLBENCH_ARGS"
     echo "NCCL logging: $LOG_NCCL"
+    echo "unsupported protocols: ${UNSUPPORTED_PROTOCOLS[*]:--}"
+    echo "step timeout: ${STEP_TIMEOUT:--}"
+    if [ ${#SKIPPED_VARIANTS[@]} -gt 0 ]; then
+        echo "skipped variants: ${SKIPPED_VARIANTS[*]}"
+    fi
     if [ ${#VARIANTS[@]} -gt 0 ]; then
         echo "rounds: ${ROUNDS:-1}"
         echo "variants:"
@@ -135,6 +189,30 @@ run_experiment() {
     local job_id="${SLURM_ARRAY_JOB_ID:-$SLURM_JOB_ID}"
     local run_id="${RUN_ID:-${job_id:+$MACHINE-$job_id}}"
     [ -n "$run_id" ] || { echo "no run id: neither a Slurm job nor RUN_ID (run-local.sh)" >&2; return 1; }
+
+    # pinning a protocol NCCL disables on this machine: refused in the job environment, variants that do it skipped
+    local v bad kept=()
+    if bad=$(unsupported_pins "NCCL_PROTO=${NCCL_PROTO:-}") && [ -n "$bad" ]; then
+        echo "NCCL_PROTO=$NCCL_PROTO in the job environment pins $bad, unsupported on $MACHINE" \
+             "(UNSUPPORTED_PROTOCOLS, machines/$MACHINE.sh)" >&2
+        return 1
+    fi
+    SKIPPED_VARIANTS=()
+    for v in "${VARIANTS[@]}"; do
+        bad=$(unsupported_pins "${VARIANT_ENV[$v]:-}")
+        if [ -n "$bad" ]; then
+            echo "WARNING: variant $v skipped, it pins $bad, unsupported on $MACHINE (UNSUPPORTED_PROTOCOLS," \
+                 "machines/$MACHINE.sh)" >&2
+            SKIPPED_VARIANTS+=("$v")
+        else
+            kept+=("$v")
+        fi
+    done
+    if [ ${#VARIANTS[@]} -gt 0 ] && [ ${#kept[@]} -eq 0 ]; then
+        echo "every variant pins a protocol unsupported on $MACHINE, nothing to run" >&2
+        return 1
+    fi
+    VARIANTS=("${kept[@]}")
 
     failed=0
     variant="" variant_env=""

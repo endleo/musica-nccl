@@ -20,7 +20,7 @@ REFERENCE = Path(__file__).resolve().parent / "reference"
 sys.path.insert(0, str(ANALYSIS))  # the tests import the scripts as modules (analyze_tuning, common, ...)
 
 # inputs of a run as written by experiment.sh; everything else in a run folder is written by the analysis
-INPUT_NAMES = {"job-info.txt", "profiler-out.tar.gz", "variant-env.txt"}
+INPUT_NAMES = {"job-info.txt", "profiler-out.tar.gz", "variant-env.txt", "failed.txt"}
 
 
 def pytest_addoption(parser):

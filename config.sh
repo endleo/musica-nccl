@@ -18,6 +18,10 @@
 #   list_modules     prints the loaded environment, for job-info.txt
 #   RESULTS_DIR      optional, default results/ in the clone: where the experiments write (e.g. outside a small
 #                    home directory); on a filesystem the compute nodes can write to. fetch.sh copies from there
+#   UNSUPPORTED_PROTOCOLS  optional, default (): NCCL protocols (LL, LL128, Simple) NCCL disables by itself on the
+#                    machine (multi-node), so that pinning them with NCCL_PROTO runs them on hardware they are not
+#                    meant for (NCCL: data corruption; on Leonardo LL128 hung). experiment.sh skips variants that
+#                    pin one; see protocol_supported there
 # and anything else of the machine (e.g. NCCL network variables). A new machine: a new file, and its detection in
 # detect_machine below.
 # Set MACHINE to override the detection: by Slurm's cluster name (in jobs SLURM_CLUSTER_NAME, on the login nodes only
@@ -177,6 +181,7 @@ nccl_logging_env() {
 # ---------------------------------------------------------------------------------------------
 
 # last, so that a machine file can use and override everything above
+UNSUPPORTED_PROTOCOLS=()
 MACHINE_FILE="$REPO_DIR/machines/$MACHINE.sh"
 [ -f "$MACHINE_FILE" ] || { echo "no machine file $MACHINE_FILE (MACHINE=$MACHINE)" >&2; return 1; }
 source "$MACHINE_FILE" || return 1

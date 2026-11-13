@@ -22,9 +22,16 @@ Open items per experiment (and general ones first), roughly by priority; done it
       `./build.sh fetch && ./build.sh compile`, check that the next run has `ncclsee-cpp patch: tree-mutex.patch`
 
 ### Tuning analysis for NCCL 2.32.3 (Sparks, Leonardo)
-- [ ] No cost model for NCCL 2.32.3 in `analyze_tuning.py` yet: compare its `ncclTopoGetAlgoTime`
-      (`src/graph/tuning.cc`, `treeCorrectionFactor`) and TUNING table format with 2.27.7's and add it to
-      `COST_MODELS`.
+- [ ] New Leonardo tuning run (`tuning.sbatch` now skips the LL128 variants there, `UNSUPPORTED_PROTOCOLS` in
+      `machines/leonardo.sh`; `STEP_TIMEOUT=10m`). Check that the Ring variants' Broadcast runs: with NCCL 2.32.3 a
+      non-empty `NCCL_ALGO` disables every algorithm first, so they now pin `broadcast:ring` as well (from the
+      source, untested; the old variants would have failed with "No algorithm/protocol ... available")
+- [x] Cost model for NCCL 2.32.3 (`src/tuning/`): same formula as 2.27.7 before Blackwell (plus a single-node
+      Blackwell Ring/Simple plateau), but the TUNING table also lists disabled combinations, so the LL128 check
+      (`isLL128Enabled`) is redone from the graphs' path types (`enabled_2_32_3`). Matches NCCL's choice at every
+      size in logging run leonardo-64298074 and the default variant of tuning run leonardo-64323905 (2026-11-13)
+- [x] `analyze_tuning.py` takes the variants from `job-info.txt` (what they pin from `NCCL_ALGO`/`NCCL_PROTO`), so
+      runs without some variants work; `--allow-incomplete` analyses the largest complete part of a run (2026-11-13)
 
 ### Analysis scripts
 - [ ] Review `analysis/` (`analyze_*.py`, `common.py`, `profiler_results.py`) and extend its tests (`analysis/tests/`):

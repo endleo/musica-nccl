@@ -55,4 +55,7 @@ declare -A VARIANT_ENV=(
     [ring_ll]="NCCL_ALGO=broadcast:ring NCCL_PROTO=broadcast:LL"
 )
 
+# the experiment is about LL128: refused where NCCL disables it (the LL128 variants would be skipped)
+protocol_supported LL128 || { echo "LL128 is unsupported on $MACHINE (UNSUPPORTED_PROTOCOLS)" >&2; exit 1; }
+
 run_experiment

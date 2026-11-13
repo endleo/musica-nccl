@@ -1,6 +1,6 @@
-NCCL's choice vs. the fastest combination (median over all rounds, us), tuning/1893400
-ratio: fastest / NCCL's choice; rounds: in how many rounds it was faster (round medians); model rank: rank of the fastest by NCCL's estimate (1 = NCCL's choice); = : the fastest is NCCL's choice itself
-noise: largest deviation between two runs of the same configuration in the same round (NCCL's own combination pinned vs. default; Broadcast also tree_* vs. default); * = faster in all rounds and by more than the noise
+NCCL's choice vs. the fastest measured combination (median over all rounds, us), tuning/1893400
+ratio: fastest / NCCL's choice; rounds: in how many rounds it was faster (round medians); model rank: rank of the fastest by NCCL's estimate among the combinations NCCL chooses from (1 = NCCL's choice; off = NCCL does not choose it by itself, e.g. LL128 where NCCL disables it); = : the fastest is NCCL's choice itself
+noise: largest deviation between two runs of the same configuration in the same round (NCCL's own combination pinned vs. default; also other variants with NCCL's choice vs. default; - : NCCL's own combination not measured); * = faster in all rounds and by more than the noise
 
 AllReduce
   size      NCCL choice     median  fastest          median  ratio  rounds   noise  model rank

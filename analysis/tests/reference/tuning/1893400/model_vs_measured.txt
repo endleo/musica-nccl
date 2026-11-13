@@ -1,5 +1,6 @@
 NCCL's estimate vs. measured ncclbench time per call [us], tuning/1893400, all rounds together
 estimate: NCCL 2.27.7's cost model with the TUNING table of logging run 1889653; pct: share of the measured calls faster than the estimate (0 = the estimate is below every call); est/med: estimate / measured median; default: NCCL's choice, with the estimate of the combination it used
+not chosen by NCCL by itself (only pinned): -
 
 AllReduce
 size                            NCCL choice                           Tree/LL                        Tree/LL128                       Tree/Simple                           Ring/LL                        Ring/LL128                       Ring/Simple

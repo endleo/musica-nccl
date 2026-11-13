@@ -1,6 +1,6 @@
 """Tuning experiment (experiments/tuning.sbatch): NCCL's own choice vs. pinned algorithm/protocol.
 
-    uv run analysis/analyze_tuning.py [results/tuning/<job>] [--logging results/logging/<job>]
+    uv run analysis/analyze_tuning.py [results/tuning/<job>] [--logging results/logging/<job>] [--allow-incomplete]
 
 Default: the newest tuning run, and the newest logging run that matches it. The logging run provides NCCL's TUNING
 table (latency and bandwidth per algorithm/protocol, the input of the cost model) and NCCL's choices with logging,
@@ -12,8 +12,17 @@ dump (logging_communicator) and checked against the tuning run's ncclsee records
 mismatch the analysis aborts with the list of them, before writing anything.
 
 Layout of a run: <run>/<round>/<variant>/ with the ncclbench outputs and profiler-out.tar.gz (ncclsee) of one variant,
-<run>/job-info.txt for the whole job. Every variant runs AllReduce and Broadcast; the tree_* variants only pin
-AllReduce, so their Broadcast runs with NCCL's choice.
+<run>/job-info.txt for the whole job. Every variant runs AllReduce and Broadcast. The variants and what they pin
+come from job-info.txt (variant_pins reads their NCCL_ALGO/NCCL_PROTO), not from their names: any set of variants
+works, as long as there is a "default" variant (NCCL's choice), each variant pins at most one Tree/Ring combination
+per operation (or none: NCCL's choice, e.g. Broadcast in the tree_* variants), no combination is pinned twice, and at
+least one is pinned. Where a machine does not support a protocol, experiment.sh leaves its variants out of the job
+(e.g. LL128 on Leonardo, "skipped variants" in job-info.txt).
+
+Incomplete runs (a variant that failed, see failed.txt, or never ran, e.g. after the job's time limit) are refused,
+unless --allow-incomplete: then the largest complete part is analysed, i.e. the rounds and variants with the most
+(round, variant) runs where every kept variant ran in every kept round (complete_selection); what is left out is
+listed at the top of every text output, and round_consistency.pdf needs at least 2 rounds.
 
 Writes into the run folder:
     choices.txt               algorithm/protocol/channels/warps ncclsee recorded per variant and size (all ranks,
@@ -33,6 +42,7 @@ over the iterations of all rounds together (e.g. 3 rounds x 50 iterations = 150 
 stated otherwise.
 """
 
+import itertools
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -54,9 +64,17 @@ ALGOS = ["tree", "ring"]
 PROTOS = ["ll", "ll128", "simple"]
 PROTO_LABELS = {"ll": "LL", "ll128": "LL128", "simple": "Simple"}
 ALGO_LABELS = {"tree": "Tree", "ring": "Ring"}
-# combinations per operation that the variants pin and the analysis compares (Broadcast only has Ring); the TUNING
-# table of the logging run has to offer exactly these (check_communicator)
+# combinations per operation the analysis knows (Broadcast only has Ring): the cost model estimates all of them,
+# variants can pin any of them; the ones a run measured are Design.measured (the TUNING table of the logging run has
+# to offer those, check_communicator)
 COMBINATIONS = {"all_reduce": [(a, p) for a in ALGOS for p in PROTOS], "broadcast": [("ring", p) for p in PROTOS]}
+# NCCL's names in NCCL_ALGO / NCCL_PROTO (lower case; ncclAlgoStr, ncclProtoStr) and the operations ("functions",
+# ncclFuncStr) of the prefixes this module reads
+NCCL_ALGOS = ["tree", "ring", "collnetdirect", "collnetchain", "nvls", "nvlstree", "pat"]
+NCCL_PROTOS = PROTOS
+NCCL_FUNCTIONS = {"allreduce": "all_reduce", "broadcast": "broadcast"}
+NCCL_OTHER_FUNCTIONS = {"reduce", "allgather", "reducescatter", "sendrecv"}
+JOB_ENVIRONMENT = "(job environment)"  # variant without an environment of its own (experiment.sh)
 
 # protocol = color (checked with the dataviz validator: CVD and normal-vision separation, contrast on white),
 # algorithm = line style and marker; NCCL's choice ("default") in black
@@ -78,17 +96,9 @@ VIOLIN_SIZES = {"all_reduce": [8, 2**16, 2**20, 2**21, 2**26, 2**30], "broadcast
 
 # job-info.txt without a machine line: from before run-local.sh, when MUSICA was the only machine
 LEGACY_MACHINE = "musica"
-MIN_ROUNDS = 2  # round_consistency.pdf and the noise floor (best_vs_default.txt) compare the rounds
-# variants of experiments/tuning.sbatch: pinned_combination reads the pinned combination from the name
-EXPECTED_VARIANTS = {
-    "default": "(job environment)",
-    "tree_ll": "NCCL_ALGO=allreduce:tree NCCL_PROTO=allreduce:LL",
-    "tree_ll128": "NCCL_ALGO=allreduce:tree NCCL_PROTO=allreduce:LL128",
-    "tree_simple": "NCCL_ALGO=allreduce:tree NCCL_PROTO=allreduce:Simple",
-    "ring_ll": "NCCL_ALGO=allreduce:ring NCCL_PROTO=allreduce:LL;broadcast:LL",
-    "ring_ll128": "NCCL_ALGO=allreduce:ring NCCL_PROTO=allreduce:LL128;broadcast:LL128",
-    "ring_simple": "NCCL_ALGO=allreduce:ring NCCL_PROTO=allreduce:Simple;broadcast:Simple",
-}
+# rounds the experiment has to plan (job-info.txt): round_consistency.pdf and the per-round ratios compare them; an
+# incomplete run analysed with --allow-incomplete may keep fewer
+MIN_ROUNDS = 2
 # NCCL_* variables of the job environment that do not change NCCL's tuning: they may differ between the runs
 IGNORED_NCCL_ENV = {"NCCL_HOME", "NCCL_DEBUG", "NCCL_DEBUG_SUBSYS", "NCCL_DEBUG_FILE", "NCCL_TOPO_DUMP_FILE",
                     "NCCL_GRAPH_DUMP_FILE"}
@@ -201,10 +211,144 @@ def _abort(run, problems):
                      + "\n".join(f"  - {p}" for p in problems))
 
 
-def check_run_info(run, logging_run):
+# ---------------------------------------------------------------------------------------------
+# the variants of a run (job-info.txt) and which of their runs the analysis uses
+# ---------------------------------------------------------------------------------------------
+
+def _nccl_list(value, elements, what):
+    """
+    {operation: set of enabled elements} of an NCCL_ALGO / NCCL_PROTO value, for the operations of TESTS it names
+    (NCCL's parseList, the same in 2.27.7 and 2.32.3): entries separated by ";", "<function>:<list>" for one
+    function, a first entry without prefix for all, "^" excludes the listed elements, names in any case. Raises
+    ValueError for unknown names
+    """
+    out = {}
+    for i, entry in enumerate(value.split(";")):
+        prefix, colon, items = entry.rpartition(":")
+        if not colon and i > 0:
+            raise ValueError(f"{what}={value}: every entry but the first needs a prefix")
+        if colon and prefix.lower() not in NCCL_FUNCTIONS and prefix.lower() not in NCCL_OTHER_FUNCTIONS:
+            raise ValueError(f"{what}={value}: unknown function {prefix}")
+        names = {x.lower() for x in items.lstrip("^").split(",") if x}
+        if unknown := sorted(names - set(elements)):
+            raise ValueError(f"{what}={value}: unknown {unknown}")
+        enabled = set(elements) - names if items.startswith("^") else names
+        for op in (TESTS.values() if not colon else [NCCL_FUNCTIONS.get(prefix.lower())]):
+            if op is not None:
+                out[op] = enabled
+    return out
+
+
+def variant_pins(env, algo_resets_all=False):
+    """
+    {operation: (algo, proto) the variant pins, or None: NCCL's choice} of a variant's environment as in
+    job-info.txt ("NCCL_ALGO=... NCCL_PROTO=...", or "(job environment)"). An operation is pinned if NCCL_ALGO or
+    NCCL_PROTO names it and that leaves exactly one combination of COMBINATIONS; an algorithm NCCL_ALGO does not list
+    for it stays allowed, except with algo_resets_all (NCCL 2.32.3: any NCCL_ALGO disables every algorithm first, so
+    the operation has none). Raises ValueError for other variables, several or no combinations left, or algorithms
+    outside ALGOS
+    """
+    if env == JOB_ENVIRONMENT:
+        return {op: None for op in TESTS.values()}
+    settings = {}
+    for word in env.split():
+        name, eq, value = word.partition("=")
+        if not eq or name not in ("NCCL_ALGO", "NCCL_PROTO"):
+            raise ValueError(f"sets {word}: only NCCL_ALGO and NCCL_PROTO are supported")
+        settings[name] = value
+    algos = _nccl_list(settings["NCCL_ALGO"], NCCL_ALGOS, "NCCL_ALGO") if settings.get("NCCL_ALGO") else {}
+    protos = _nccl_list(settings["NCCL_PROTO"], NCCL_PROTOS, "NCCL_PROTO") if "NCCL_PROTO" in settings else {}
+    pins = {}
+    for op in TESTS.values():
+        if op not in algos and op not in protos:
+            pins[op] = None
+            continue
+        op_algos = algos.get(op, set() if algos and algo_resets_all else set(NCCL_ALGOS))
+        op_protos = protos.get(op, set(NCCL_PROTOS))
+        if not op_algos:
+            raise ValueError(f"leaves {pr.OPERATION_LABELS[op]} no algorithm (NCCL_ALGO is set but does not name it: "
+                             "NCCL 2.32.3 then disables all its algorithms)")
+        if op in algos and (other := sorted(op_algos - set(ALGOS))):  # explicitly enabled, e.g. NVLS
+            raise ValueError(f"enables {other} for {pr.OPERATION_LABELS[op]}, only {ALGOS} are modelled")
+        left = [(a, p) for a, p in COMBINATIONS[op] if a in op_algos and p in op_protos]
+        if len(left) != 1:
+            raise ValueError(f"leaves {pr.OPERATION_LABELS[op]} {len(left)} combinations "
+                             f"{[combination_label(*c) for c in left]}, expected exactly one")
+        pins[op] = left[0]
+    return pins
+
+
+def cell_status(d):
+    """None if a (round, variant) folder has all outputs, else what is wrong with it"""
+    if (d / "failed.txt").exists():
+        return "failed: " + "; ".join((d / "failed.txt").read_text().split("\n")).strip("; ")
+    if not (d / "profiler-out.tar.gz").exists():
+        return "no profiler output (did not finish)"
+    if missing := [f"{t}_ncclsee.out" for t in TESTS if not (d / f"{t}_ncclsee.out").exists()]:
+        return f"{', '.join(missing)} missing"
+    return None
+
+
+@dataclass(frozen=True)
+class Design:
+    """
+    what the analysis uses of a tuning run: pins {variant: {operation: (algo, proto) or None}} of the variants it
+    analyses, cells ((round, variant, folder), ...) in round order (every kept variant in every kept round), and
+    left_out: what an incomplete run lacks or the analysis left out (empty for a complete run)
+    """
+    pins: dict
+    cells: tuple
+    left_out: tuple = ()
+
+    @property
+    def rounds(self):
+        return sorted({r for r, _, _ in self.cells})
+
+    @property
+    def variants(self):
+        return variant_order({v for _, v, _ in self.cells}, self.pins)
+
+    @property
+    def measured(self):
+        """{operation: [(algo, proto) pinned by a variant]} in the order of COMBINATIONS"""
+        pinned = {(op, c) for p in self.pins.values() for op, c in p.items() if c is not None}
+        return {op: [c for c in combos if (op, c) in pinned] for op, combos in COMBINATIONS.items()}
+
+    def pinned(self, variant, operation):
+        """(algo, proto) a variant pins for an operation, None if the operation runs with NCCL's choice"""
+        return self.pins[variant][operation]
+
+    def note(self):
+        """lines for the top of the text outputs of an incomplete run, [] for a complete one"""
+        if not self.left_out:
+            return []
+        return ([f"INCOMPLETE RUN (--allow-incomplete): analysed rounds {self.rounds} x variants {self.variants}; "
+                 "left out:"] + [f"  {x}" for x in self.left_out] + [""])
+
+
+def complete_selection(ok, rounds, variants, pinning):
+    """
+    the largest complete part of a run: (rounds, variants) with the most (round, variant) runs, where every variant
+    ran in every round (ok: set of (round, variant) that did), "default" is among the variants and at least one of
+    `pinning` (the variants that pin a combination); ties: more variants, then earlier rounds. ([], []) if there is
+    no such part
+    """
+    best, key = ([], []), None
+    for n in range(len(rounds), 0, -1):
+        for rs in itertools.combinations(rounds, n):
+            vs = [v for v in variants if all((r, v) in ok for r in rs)]
+            if "default" not in vs or not set(vs) & set(pinning):
+                continue
+            k = (len(rs) * len(vs), len(vs))
+            if key is None or k > key:
+                best, key = (list(rs), vs), k
+    return best
+
+
+def check_run_info(run, logging_run, allow_incomplete=False):
     """
     job-info.txt and layout of the tuning run, and the logging run against it (logging_problems); aborts with all
-    problems
+    problems, else returns the Design of the run (with allow_incomplete: of its largest complete part)
     """
     run, problems = Path(run), []
     if not (run / "job-info.txt").exists():
@@ -217,14 +361,32 @@ def check_run_info(run, logging_run):
     if rounds is None or rounds < MIN_ROUNDS:
         problems.append(f"tuning run: rounds {info.get('rounds', '(not in job-info.txt)')}, expected at least "
                         f"{MIN_ROUNDS} (MIN_ROUNDS)")
-    variants = info["variants"]
-    if missing := [v for v in EXPECTED_VARIANTS if v not in variants]:
-        problems.append(f"tuning run: variants {missing} missing (experiments/tuning.sbatch)")
-    if extra := [v for v in variants if v not in EXPECTED_VARIANTS]:
-        problems.append(f"tuning run: unknown variants {extra}")
-    for v in set(variants) & set(EXPECTED_VARIANTS):
-        if variants[v] != EXPECTED_VARIANTS[v]:
-            problems.append(f"tuning run: variant {v} sets '{variants[v]}', expected '{EXPECTED_VARIANTS[v]}'")
+
+    # the variants: what each pins (an invalid variant is left out of an incomplete run: it may be why it failed)
+    nccl = nccl_version(info)
+    resets = COST_MODELS[nccl].algo_resets_all if nccl in COST_MODELS else False
+    pins, left_out = {}, []
+    for v, env in info["variants"].items():
+        try:
+            pins[v] = variant_pins(env, resets)
+        except ValueError as e:
+            if allow_incomplete:
+                left_out.append(f"variant {v}: {e} (NCCL {nccl})")
+            else:
+                problems.append(f"tuning run: variant {v} {e} (NCCL {nccl})")
+    if info["variants"].get("default") != JOB_ENVIRONMENT:
+        problems.append(f"tuning run: no variant 'default' with the job environment (NCCL's choice), variants "
+                        f"{info['variants']}")
+    by_combination = {}
+    for v, p in pins.items():
+        for op, c in p.items():
+            if c is not None:
+                by_combination.setdefault((op, c), []).append(v)
+    for (op, c), vs in by_combination.items():
+        if len(vs) > 1:
+            problems.append(f"tuning run: {pr.OPERATION_LABELS[op]} {combination_label(*c)} pinned by several "
+                            f"variants {vs}")
+
     bench = info.get("ncclbench", "")
     if "--blocking" not in bench:
         problems.append("tuning run: ncclbench without --blocking (the model assumes one operation per call)")
@@ -237,17 +399,39 @@ def check_run_info(run, logging_run):
     for op, need in VIOLIN_SIZES.items():
         if missing := sorted(set(need) - sizes):
             problems.append(f"tuning run: sizes {missing} of model_violins.pdf ({op}) not measured")
-    # every round has every variant, each with both tests' output
-    found = {(r, v) for r, v, _ in variant_dirs(run)}
-    expected = {(f"{r:02d}", v) for r in range(1, (rounds or 0) + 1) for v in EXPECTED_VARIANTS}
-    if missing := sorted(expected - found):
-        problems.append(f"tuning run: (round, variant) without profiler output: {missing}")
-    if extra := sorted(found - expected):
+
+    # every round has every variant, each with all outputs (cell_status)
+    planned_rounds = [f"{r:02d}" for r in range(1, (rounds or 0) + 1)]
+    dirs = {(r, v): d for r, v, d in variant_dirs(run)}
+    if extra := sorted(set(dirs) - {(r, v) for r in planned_rounds for v in info["variants"]}):
         problems.append(f"tuning run: unexpected (round, variant): {extra}")
-    for r, v, d in variant_dirs(run):
-        for test in TESTS:
-            if not (d / f"{test}_ncclsee.out").exists():
-                problems.append(f"tuning run: {d.relative_to(run)}/{test}_ncclsee.out missing")
+    status = {(r, v): cell_status(dirs[(r, v)]) if (r, v) in dirs else "missing"
+              for r in planned_rounds for v in info["variants"]}
+    ok = {cell for cell, s in status.items() if s is None and cell[1] in pins}
+    incomplete = []  # "<round>/<variant>: <status>", a round in one line if all its variants have the same
+    for r in planned_rounds:
+        st = {v: status[(r, v)] for v in info["variants"]}
+        if len(set(st.values())) == 1 and None not in st.values():
+            incomplete.append(f"{r}/(all variants): {next(iter(st.values()))}")
+        else:
+            incomplete += [f"{r}/{v}: {x}" for v, x in st.items() if x is not None]
+    keep_rounds, keep_variants = planned_rounds, [v for v in info["variants"] if v in pins]
+    if incomplete and not allow_incomplete:
+        problems.append("tuning run: incomplete, --allow-incomplete analyses the complete part: "
+                        + "; ".join(incomplete))
+    elif incomplete or left_out:
+        pinning = [v for v in keep_variants if any(c is not None for c in pins[v].values())]
+        keep_rounds, keep_variants = complete_selection(ok, planned_rounds, keep_variants, pinning)
+        dropped = [f"round {r}" for r in planned_rounds if r not in keep_rounds]
+        dropped += [f"variant {v}" for v in info["variants"] if v not in keep_variants]
+        left_out += incomplete + ([f"not analysed: {', '.join(dropped)}"] if dropped else [])
+        if not keep_rounds:
+            problems.append("tuning run: incomplete, and no round has both the default variant and one that pins a "
+                            "combination: nothing to analyse")
+    kept_pins = {v: pins[v] for v in keep_variants if v in pins}
+    if keep_rounds and not any(c for p in kept_pins.values() for c in p.values()):
+        problems.append(f"tuning run: no variant {'left that pins' if left_out else 'pins'} a combination of "
+                        f"{COMBINATIONS} (only NCCL's choice)")
 
     # the logging run: source of the TUNING table and of the reference choices
     if not Path(logging_run).is_dir():
@@ -256,6 +440,8 @@ def check_run_info(run, logging_run):
         problems += logging_problems(logging_run, info)
     if problems:
         _abort(run, problems)
+    cells = tuple((r, v, dirs[(r, v)]) for r in keep_rounds for v in variant_order(keep_variants, kept_pins))
+    return Design(pins=kept_pins, cells=cells, left_out=tuple(left_out))
 
 
 def matching_logging_run(run, results=None):
@@ -331,11 +517,11 @@ def logging_communicator(logging_dir):
                         min_comp_cap=min(sms), graph_types=tuple((a, *graphs[a]) for a in ALGOS))
 
 
-def check_communicator(run, choices, table, comm, nodes):
+def check_communicator(run, choices, table, comm, nodes, measured):
     """
     what NCCL actually used in the tuning run (ncclsee records) against the communicator of the logging run and its
-    `nodes` (job-info.txt), and what the TUNING table of the logging run offers against COMBINATIONS; aborts on a
-    mismatch
+    `nodes` (job-info.txt), and whether the TUNING table of the logging run offers the `measured` combinations
+    (Design.measured); aborts on a mismatch
     """
     problems = []
     if comm.nodes != nodes:
@@ -349,28 +535,16 @@ def check_communicator(run, choices, table, comm, nodes):
     if channels != comm.channels:
         problems.append(f"at most {channels} channels in the default variant, expected {comm.channels} (the logging "
                         "run's communicator)")
-    available = {op: sorted((a, p) for o, a, p in table if o == op) for op in TESTS.values()}
-    if available != {op: sorted(c) for op, c in COMBINATIONS.items()}:
-        problems.append(f"TUNING table of the logging run offers {available}, expected COMBINATIONS {COMBINATIONS}")
+    if lacking := [f"{pr.OPERATION_LABELS[op]} {combination_label(*c)}" for op, combos in measured.items()
+                   for c in combos if (op, *c) not in table]:
+        problems.append(f"TUNING table of the logging run lacks measured combinations {lacking} (offers "
+                        f"{sorted(table)})")
     if problems:
         _abort(run, problems)
-
-def variant_name(algo, proto):
-    return f"{algo}_{proto}"
 
 
 def combination_label(algo, proto):
     return f"{ALGO_LABELS[algo]}/{PROTO_LABELS[proto]}"
-
-
-def pinned_combination(variant, operation):
-    """(algo, proto) a variant pins for an operation, None if the operation runs with NCCL's choice"""
-    if variant == "default":
-        return None
-    algo, proto = variant.split("_")
-    if operation == "broadcast" and algo == "tree":
-        return None  # the tree_* variants only pin AllReduce
-    return algo, proto
 
 
 # ---------------------------------------------------------------------------------------------
@@ -378,15 +552,10 @@ def pinned_combination(variant, operation):
 # ---------------------------------------------------------------------------------------------
 
 def variant_dirs(run):
-    """[(round, variant, directory)] of a tuning run, in round order"""
-    out = []
-    for round_dir in sorted(p for p in Path(run).iterdir() if p.is_dir() and p.name.isdigit()):
-        for d in sorted(p for p in round_dir.iterdir() if p.is_dir()):
-            if (d / "profiler-out.tar.gz").exists():
-                out.append((round_dir.name, d.name, d))
-            else:
-                print(f"{d}: no profiler output (failed run?), skipped")
-    return out
+    """[(round, variant, directory)] of every variant folder of a tuning run, in round order (complete or not)"""
+    return [(round_dir.name, d.name, d)
+            for round_dir in sorted(p for p in Path(run).iterdir() if p.is_dir() and p.name.isdigit())
+            for d in sorted(p for p in round_dir.iterdir() if p.is_dir())]
 
 
 def ncclbench_settings(run):
@@ -395,14 +564,14 @@ def ncclbench_settings(run):
     return int(re.search(r"--warmups (\d+)", info).group(1)), int(re.search(r"--iterations (\d+)", info).group(1))
 
 
-def load_times(run):
+def load_times(run, design):
     """
-    benchmark and ncclsee times of all variants and rounds (profiler_results.load_run per variant folder), with
-    columns round and variant; run = round, so that the per-run helpers of profiler_results treat rounds as runs
+    benchmark and ncclsee times of the design's rounds and variants (profiler_results.load_run per variant folder),
+    with columns round and variant; run = round, so that the per-run helpers of profiler_results treat rounds as runs
     """
     warmups, iterations = ncclbench_settings(run)
     frames = []
-    for rnd, variant, d in variant_dirs(run):
+    for rnd, variant, d in design.cells:
         df = pr.load_run(d, profilers=["ncclsee"], nccl_tests=[], nccl_bench_tests=list(TESTS),
                          warmups=warmups, iterations=iterations)
         frames.append(df.assign(run=rnd, round=rnd, variant=variant))
@@ -430,10 +599,10 @@ def ncclsee_calls(directory):
     return pd.DataFrame(rows)
 
 
-def load_choices(run):
-    """ncclsee's records of what NCCL did, per round, variant and test"""
+def load_choices(design):
+    """ncclsee's records of what NCCL did, per round, variant and test (the design's rounds and variants)"""
     frames = []
-    for rnd, variant, d in variant_dirs(run):
+    for rnd, variant, d in design.cells:
         root = pr.extract_profiler_outputs(d) / "profiler-out" / "ncclsee"
         for test in TESTS:
             frames.append(ncclsee_calls(root / test).assign(round=rnd, variant=variant, test=test))
@@ -561,12 +730,14 @@ class NcclCostModel:
     """
     the cost model of one NCCL version: time(table, comm, operation, algo, proto, nbytes) -> estimate [us] of one
     call (also for combinations NCCL only uses when pinned), enabled(table, comm) -> {(operation, algo, proto)}
-    NCCL chooses from by itself, and the NCCL_* variables of the job environment that would change NCCL's choice
-    in a way the model does not follow (run_problems refuses runs with them)
+    NCCL chooses from by itself, the NCCL_* variables of the job environment that would change NCCL's choice in a
+    way the model does not follow (run_problems refuses runs with them), and how the version reads NCCL_ALGO
+    (algo_resets_all, see variant_pins)
     """
     time: object
     enabled: object
     unsupported_env: frozenset = frozenset()
+    algo_resets_all: bool = False
 
 
 # NCCL versions with a cost model here (job-info.txt's "NCCL:" version); runs with other versions are refused
@@ -576,7 +747,8 @@ class NcclCostModel:
 COST_MODELS = {
     "2.27.7": NcclCostModel(time=model_time_2_27_7, enabled=enabled_2_27_7),
     "2.32.3": NcclCostModel(time=model_time_2_32_3, enabled=enabled_2_32_3,
-                            unsupported_env=frozenset({"NCCL_ALGO", "NCCL_PROTO", "NCCL_LL128_C2C"})),
+                            unsupported_env=frozenset({"NCCL_ALGO", "NCCL_PROTO", "NCCL_LL128_C2C"}),
+                            algo_resets_all=True),
 }
 
 
@@ -641,15 +813,36 @@ def _choice_per_size(calls):
         calls=calls.groupby("size_bytes").size())
 
 
-def check_choices(run, choices, estimates, comm, logging_dir):
-    """text report: every variant used what it pinned; NCCL's choice vs. logging run and model"""
+def protocol_check(info, model):
+    """
+    the machine file's UNSUPPORTED_PROTOCOLS (job-info.txt "unsupported protocols", runs since experiment.sh records
+    them) against the protocols NCCL does not use by itself for any combination of the TUNING table (the cost
+    model's enabled): (text line, number of problems)
+    """
+    disabled = sorted(p for p in PROTOS if not any(q == p for _, _, q in model.enabled))  # 2.27.7: not in the table
+    label_of = lambda ps: ", ".join(PROTO_LABELS[p] for p in ps) or "-"
+    if "unsupported protocols" not in info:
+        return (f"Protocols NCCL disables by itself (cost model, logging run): {label_of(disabled)}; the run does not "
+                "record the machine's UNSUPPORTED_PROTOCOLS (older experiment.sh)"), 0
+    declared = sorted(p.lower() for p in info["unsupported protocols"].split() if p != "-")
+    same = declared == disabled
+    return (f"Protocols NCCL disables by itself (cost model, logging run): {label_of(disabled)}; unsupported "
+            f"according to the machine file: {label_of(declared)}"
+            + ("" if same else "  <-- DIFFERS (UNSUPPORTED_PROTOCOLS in machines/<machine>.sh)")), int(not same)
+
+
+def check_choices(run, choices, estimates, model, logging_dir, design, info):
+    """
+    text report: every variant used what it pinned; NCCL's choice vs. logging run and model; the machine's
+    unsupported protocols vs. NCCL's
+    """
     warmups, iterations = ncclbench_settings(run)
-    calls = comm.ranks * (warmups + iterations)
-    text = []
+    calls = model.comm.ranks * (warmups + iterations)
+    text = design.note()
     problems = 0
 
     text.append("Calls recorded by ncclsee per (round, variant, test, size), all ranks; expected "
-                f"{comm.ranks} ranks x ({warmups} + {iterations}) = {calls}")
+                f"{model.comm.ranks} ranks x ({warmups} + {iterations}) = {calls}")
     counts = choices.groupby(["round", "variant", "test", "size_bytes"]).size()
     text.append(f"  min {counts.min()}, max {counts.max()} over {len(counts)} groups"
                 + ("" if counts.min() == counts.max() == calls else "  <-- MISMATCH"))
@@ -657,13 +850,15 @@ def check_choices(run, choices, estimates, comm, logging_dir):
     rounds = choices.groupby(["variant", "test", "size_bytes", "algo", "proto", "channels", "warps"])["round"].nunique()
     text.append(f"  rounds per (variant, test, size, algo, proto, channels, warps): {sorted(set(rounds))} "
                 f"({choices['round'].nunique()} = the same choice in every round)")
-    text.append("")
+    line, n = protocol_check(info, model)
+    text += [line, ""]
+    problems += n
 
     for test, operation in TESTS.items():
-        for variant in sorted(choices["variant"].unique(), key=lambda v: (v != "default", v)):
+        for variant in design.variants:
             calls = choices[(choices["test"] == test) & (choices["variant"] == variant)]
             per_size = _choice_per_size(calls)
-            pinned = pinned_combination(variant, operation)
+            pinned = design.pinned(variant, operation)
             status = ""
             if pinned is not None:
                 ok = (per_size["algo"] == pinned[0]) & (per_size["proto"] == pinned[1])
@@ -705,16 +900,16 @@ def check_choices(run, choices, estimates, comm, logging_dir):
 # measured vs. estimated
 # ---------------------------------------------------------------------------------------------
 
-def measured_combinations(bench):
+def measured_combinations(bench, design):
     """
     benchmark times per (operation, combination): the pinned variants, and NCCL's choice as its own entry
-    (algo = proto = "default"); the tree_* variants' Broadcast runs (NCCL's choice as well) are left out, so every
-    entry has the same number of calls
+    (algo = proto = "default"); runs of other variants with NCCL's choice (e.g. the tree_* variants' Broadcast) are
+    left out, so every entry has the same number of calls
     """
     rows = []
     for variant, g in bench.groupby("variant"):
         for operation, h in g.groupby("operation"):
-            pinned = pinned_combination(variant, operation)
+            pinned = design.pinned(variant, operation)
             if pinned is None and variant != "default":
                 continue
             algo, proto = pinned or ("default", "default")
@@ -747,8 +942,9 @@ def model_comparison(measured, estimates, choices):
     return out
 
 
-def comparison_text(comp, run, model, logging_dir):
-    text = [f"NCCL's estimate vs. measured ncclbench time per call [us], {label(run)}, all rounds together",
+def comparison_text(comp, run, model, logging_dir, design):
+    text = design.note() + [
+            f"NCCL's estimate vs. measured ncclbench time per call [us], {label(run)}, all rounds together",
             f"estimate: NCCL {model.nccl}'s cost model with the TUNING table of logging run "
             f"{logging_dir.parent.name}; pct: share of the "
             "measured calls faster than the estimate (0 = the estimate is below every call); est/med: estimate / "
@@ -758,7 +954,7 @@ def comparison_text(comp, run, model, logging_dir):
              f"{', '.join(f'{pr.OPERATION_LABELS[o]} {combination_label(a, p)}' for o, a, p in off) or '-'}", ""]
     for operation in TESTS.values():
         sel = comp[comp["operation"] == operation]
-        combos = [("default", "default")] + COMBINATIONS[operation]
+        combos = [("default", "default")] + design.measured[operation]
         header = f"{'size':<9}" + "".join(
             f"{'NCCL choice' if a == 'default' else combination_label(a, p):>34}" for a, p in combos)
         sub = f"{'':<9}" + "".join(f"{'estimate':>10}{'median':>10}{'pct':>6}{'est/med':>8}" for _ in combos)
@@ -786,15 +982,20 @@ def _combo_style(algo, proto):
     return {"color": PROTO_COLORS[proto], "linestyle": ALGO_LINESTYLES[algo], "marker": ALGO_MARKERS[algo]}
 
 
-def plot_model_overview(measured, comp):
+def plot_model_overview(measured, comp, design):
     """
-    one panel per (operation, combination), over all sizes: box = measured calls / measured median (quartiles,
-    whiskers 5 - 95 %), point = NCCL's estimate / measured median; log y
+    one panel per measured (operation, combination), over all sizes: box = measured calls / measured median
+    (quartiles, whiskers 5 - 95 %), point = NCCL's estimate / measured median; log y. 3 panels per row
     """
-    panels = [(op, a, p) for op in TESTS.values() for a, p in COMBINATIONS[op]]
+    panels = [(op, a, p) for op in TESTS.values() for a, p in design.measured[op]]
+    ncols = min(3, len(panels))
+    nrows = -(-len(panels) // ncols)
     with plt.rc_context(pr.PLOT_STYLE):
-        fig, axs = plt.subplots(3, 3, figsize=(13, 9.5), sharex=True, sharey=True, layout="constrained")
-        for ax, (op, algo, proto) in zip(axs.flat, panels):
+        fig, axs = plt.subplots(nrows, ncols, figsize=(13 * ncols / 3, 9.5 * nrows / 3), sharex=True,
+                                sharey=True, layout="constrained", squeeze=False)
+        for ax in axs.flat[len(panels):]:
+            ax.axis("off")
+        for i, (ax, (op, algo, proto)) in enumerate(zip(axs.flat, panels)):
             sel = measured[(measured["operation"] == op) & (measured["algo"] == algo) & (measured["proto"] == proto)]
             c = comp[(comp["operation"] == op) & (comp["algo"] == algo) & (comp["proto"] == proto)].set_index("size_bytes")
             sizes = sorted(sel["size_bytes"].unique())
@@ -819,8 +1020,9 @@ def plot_model_overview(measured, comp):
             ticks = [t for t in pos if t == int(t)][::3]
             ax.set_xticks(ticks, [pr.size_label(int(2**t)) for t in ticks], rotation=45, ha="right")
             ax.set_title(f"{pr.OPERATION_LABELS[op]}, {combination_label(algo, proto)}")
-        for ax in axs[-1]:
-            ax.set_xlabel("Message size")
+            if i + ncols >= len(panels):  # lowest panel of its column
+                ax.set_xlabel("Message size")
+                ax.tick_params(labelbottom=True)
         for ax in axs[:, 0]:
             ax.set_ylabel("Time / measured median")
         handles = [Patch(facecolor="gray", alpha=0.6, edgecolor=pr.EDGE_COLOR,
@@ -832,15 +1034,18 @@ def plot_model_overview(measured, comp):
     return fig
 
 
-def plot_model_violins(measured, comp):
-    """selected sizes, absolute times: violin of the measured calls per combination, NCCL's estimate as a point"""
-    ops = list(TESTS.values())
+def plot_model_violins(measured, comp, design):
+    """
+    selected sizes, absolute times: violin of the measured calls per combination, NCCL's estimate as a point; one row
+    per operation with measured combinations
+    """
+    ops = [op for op in TESTS.values() if design.measured[op]]
     ncols = max(len(VIOLIN_SIZES[op]) for op in ops)
     with plt.rc_context(pr.PLOT_STYLE):
         fig, axs = plt.subplots(len(ops), ncols, figsize=(3.1 * ncols, 3.3 * len(ops)), layout="constrained",
                                 squeeze=False)
         for row, op in zip(axs, ops):
-            combos = COMBINATIONS[op]
+            combos = design.measured[op]
             for ax, size in zip(row, VIOLIN_SIZES[op]):
                 c = comp[(comp["operation"] == op) & (comp["size_bytes"] == size)].set_index(["algo", "proto"])
                 for x, (algo, proto) in enumerate(combos):
@@ -864,11 +1069,14 @@ def plot_model_violins(measured, comp):
                 ax.yaxis.grid(True, linestyle=":", color="lightgray", zorder=0)
                 ax.set_xticks(range(len(combos)), [combination_label(a, p).replace("/", "\n") for a, p in combos],
                               fontsize=8)
+                if len(combos) < 3:  # violins of the usual width (as with 3), centred
+                    centre = (len(combos) - 1) / 2
+                    ax.set_xlim(centre - 1.6, centre + 1.6)
                 ax.set_title(f"{pr.OPERATION_LABELS[op]}, {pr.size_label(int(size))}")
             row[0].set_ylabel("Time [µs]")
             for ax in row[len(VIOLIN_SIZES[op]):]:
                 ax.axis("off")
-        handles = [Patch(facecolor="gray", alpha=0.55, edgecolor=pr.EDGE_COLOR, label=f"measured calls ({measured['round'].nunique()} rounds)"),
+        handles = [Patch(facecolor="gray", alpha=0.55, edgecolor=pr.EDGE_COLOR, label=f"measured calls ({_rounds(measured['round'].nunique())})"),
                    Line2D([], [], color="black", linewidth=1.5, label="measured median"),
                    Line2D([], [], color="gray", marker="o", markeredgecolor="black", linestyle="none",
                           label="NCCL's estimate"),
@@ -882,9 +1090,19 @@ def plot_model_violins(measured, comp):
 # rounds, pinned vs. default
 # ---------------------------------------------------------------------------------------------
 
-def variant_order(variants):
-    order = ["default"] + [variant_name(a, p) for a in ALGOS for p in PROTOS]
-    return [v for v in order if v in set(variants)] + sorted(set(variants) - set(order))
+def _rounds(n):
+    return f"{n} round" + ("s" if n != 1 else "")
+
+
+def variant_order(variants, pins):
+    """default first, then the variants by what they pin (AllReduce first, in the order of COMBINATIONS), then the
+    variants that pin nothing, by name"""
+    rank = {(op, c): i for i, (op, c) in enumerate((op, c) for op, combos in COMBINATIONS.items() for c in combos)}
+
+    def key(v):
+        pinned = [rank[(op, c)] for op, c in pins.get(v, {}).items() if c is not None]
+        return (v != "default", not pinned, min(pinned, default=0), v)
+    return sorted(set(variants), key=key)
 
 
 def round_deviation(bench):
@@ -894,9 +1112,9 @@ def round_deviation(bench):
     return pr.iteration_deviation(df).rename(columns={"profiler": "variant", "run": "round"})
 
 
-def plot_round_consistency(dev):
+def plot_round_consistency(dev, design):
     """as profiler_results.plot_iteration_consistency, with rounds instead of iterations and one row per variant"""
-    variants = variant_order(dev["variant"].unique())
+    variants = design.variants
     ops = list(TESTS.values())
     rounds = sorted(dev["round"].unique())
     band = dev.groupby(["operation", "variant", "size_bytes"])["iqr_pct"].mean().reset_index()
@@ -922,7 +1140,7 @@ def plot_round_consistency(dev):
                 _size_axis(ax, b["size_bytes"], label=(r == len(variants) - 1))
                 if r == 0:
                     ax.set_title(pr.OPERATION_LABELS[op])
-                pinned = pinned_combination(variant, op)
+                pinned = design.pinned(variant, op)
                 name = "default" if variant == "default" else (
                     combination_label(*pinned) if pinned else f"NCCL's choice (run of {variant})")
                 ax.text(0.01, 0.95, name, transform=ax.transAxes, ha="left", va="top", fontsize=8,
@@ -957,34 +1175,40 @@ def pinned_vs_default(measured, comp):
     return out.drop(columns=["used_algo", "used_proto"])
 
 
-def noise_floor(bench, pvd):
+def noise_floor(bench, pvd, design):
     """
     per (operation, size_bytes): largest deviation from 1 of the per-round ratio between two runs of the same
-    configuration (separate processes, same round): the pinned combination NCCL chose itself vs. default, and for
-    Broadcast also the tree_* variants (NCCL's choice as well) vs. default. Differences below it are not
-    attributable to the combination
+    configuration (separate processes, same round): the pinned combination NCCL chose itself vs. default, and
+    other variants with NCCL's choice for the operation (e.g. Broadcast in the tree_* variants) vs. default.
+    Differences below it are not attributable to the combination. NaN where there is no such pair (the combination
+    NCCL chose was not measured, e.g. left out of an incomplete run): no difference counts as beyond the noise there
     """
+    index = pd.MultiIndex.from_frame(pvd[["operation", "size_bytes"]].drop_duplicates().sort_values(
+        ["operation", "size_bytes"]))
     same = pvd[pvd["same"]].set_index(["operation", "size_bytes"])
-    noise = np.maximum(same["ratio_max"] - 1, 1 - same["ratio_min"])
+    noise = np.maximum(same["ratio_max"] - 1, 1 - same["ratio_min"]).reindex(index)
     medians = bench.groupby(["operation", "variant", "round", "size_bytes"])["time_us"].median()
     for operation in TESTS.values():
         default = medians.loc[(operation, "default")]
-        for variant in bench["variant"].unique():
-            if variant == "default" or pinned_combination(variant, operation) is not None:
+        for variant in design.variants:
+            if variant == "default" or design.pinned(variant, operation) is not None:
                 continue
             dev = (medians.loc[(operation, variant)] / default - 1).abs().groupby("size_bytes").max()
             idx = pd.MultiIndex.from_product([[operation], dev.index], names=["operation", "size_bytes"])
-            noise = np.maximum(noise, pd.Series(dev.to_numpy(), index=idx).reindex(noise.index).fillna(0))
+            noise = np.fmax(noise, pd.Series(dev.to_numpy(), index=idx).reindex(index))
     return noise.rename("noise")
 
 
 def clearly_faster(pvd, noise):
-    """pinned combinations faster than NCCL's choice in every round, and by more than the noise floor of the size"""
+    """
+    pinned combinations faster than NCCL's choice in every round, and by more than the noise floor of the size (never
+    where the noise floor is unknown, NaN)
+    """
     n = pvd.set_index(["operation", "size_bytes"]).index.map(noise).to_numpy()
     return (pvd["algo"] != "default") & ~pvd["same"] & (pvd["ratio_max"] < 1) & (pvd["ratio"] < 1 - n)
 
 
-def plot_pinned_vs_default(pvd, noise):
+def plot_pinned_vs_default(pvd, noise, design):
     """
     like latency_ratio.pdf: top median latency per combination (NCCL's choice in black), bottom median pinned /
     median default with the range of the per-round ratios as band; below 1 = the pinned combination is faster.
@@ -996,7 +1220,7 @@ def plot_pinned_vs_default(pvd, noise):
                                 squeeze=False, height_ratios=[1, 1.15])
         for col, op in enumerate(ops):
             top, bottom = axs[0][col], axs[1][col]
-            for algo, proto in [("default", "default")] + COMBINATIONS[op]:
+            for algo, proto in [("default", "default")] + design.measured[op]:
                 sel = pvd[(pvd["operation"] == op) & (pvd["algo"] == algo) & (pvd["proto"] == proto)].sort_values(
                     "size_bytes")
                 st = _combo_style(algo, proto)
@@ -1034,7 +1258,7 @@ def plot_pinned_vs_default(pvd, noise):
                           label="NCCL's choice (default)")]
         handles += [Line2D([], [], color=PROTO_COLORS[p], linestyle=ALGO_LINESTYLES[a], marker=ALGO_MARKERS[a],
                            markersize=4, markeredgecolor="white", linewidth=1.4, label=combination_label(a, p))
-                    for a in ALGOS for p in PROTOS]
+                    for a in ALGOS for p in PROTOS if any((a, p) in combos for combos in design.measured.values())]
         handles += [Patch(facecolor="gray", alpha=0.25, label="range of the per-round ratios"),
                     Patch(facecolor="#e0e0e0", label="noise floor (same configuration, separate runs)"),
                     Line2D([], [], color="gray", marker="o", markerfacecolor="none", markersize=8, linestyle="none",
@@ -1043,26 +1267,35 @@ def plot_pinned_vs_default(pvd, noise):
     return fig
 
 
-def best_text(pvd, comp, noise, run, rounds):
-    """per size: NCCL's choice and the fastest measured combination (median over all `rounds` rounds)"""
-    text = [f"NCCL's choice vs. the fastest combination (median over all rounds, us), {label(run)}",
+def best_text(pvd, comp, estimates, noise, run, design):
+    """
+    per size: NCCL's choice and the fastest measured combination (median over all rounds of the design), with its
+    rank among all combinations NCCL chooses from (estimates, measured or not)
+    """
+    rounds = len(design.rounds)
+    text = design.note() + [
+            f"NCCL's choice vs. the fastest measured combination (median over all rounds, us), {label(run)}",
             "ratio: fastest / NCCL's choice; rounds: in how many rounds it was faster (round medians); model rank: "
             "rank of the fastest by NCCL's estimate among the combinations NCCL chooses from (1 = NCCL's choice; off = "
             "NCCL does not choose it by itself, e.g. LL128 where NCCL disables it); = : the fastest is NCCL's choice "
             "itself",
             "noise: largest deviation between two runs of the same configuration in the same round (NCCL's own "
-            "combination pinned vs. default; Broadcast also tree_* vs. default); * = faster in all rounds and by more "
-            "than the noise", ""]
+            "combination pinned vs. default; also other variants with NCCL's choice vs. default; - : NCCL's own "
+            "combination not measured); * = faster in all rounds and by more than the noise", ""]
     fast = pvd[clearly_faster(pvd, noise)]
     for op in TESTS.values():
         text.append(pr.OPERATION_LABELS[op])
+        if not design.measured[op]:
+            text += ["  (no pinned combination measured)", ""]
+            continue
         text.append(f"  {'size':<10}{'NCCL choice':<13}{'median':>9}  {'fastest':<14}{'median':>9}{'ratio':>7}"
                     f"{'rounds':>8}{'noise':>8}{'model rank':>12}")
         for size, g in pvd[(pvd["operation"] == op) & (pvd["algo"] != "default")].groupby("size_bytes"):
             c = comp[(comp["operation"] == op) & (comp["size_bytes"] == size)]
             d = c[c["algo"] == "default"].iloc[0]
             best = g.loc[g["median_us"].idxmin()]
-            ranked = c[(c["algo"] != "default") & c["enabled"].astype(bool)].sort_values("estimate_us")
+            e = estimates[(estimates["operation"] == op) & (estimates["size_bytes"] == size)]
+            ranked = e[e["enabled"]].sort_values("estimate_us")
             ranked = [(a, p) for a, p in zip(ranked["algo"], ranked["proto"])]
             rank = ranked.index((best["algo"], best["proto"])) + 1 if (best["algo"], best["proto"]) in ranked \
                 else "off"
@@ -1070,58 +1303,69 @@ def best_text(pvd, comp, noise, run, rounds):
             text.append(f"  {pr.size_label(int(size)):<10}{combination_label(d['used_algo'], d['used_proto']):<13}"
                         f"{d['median_us']:>9.1f}  {combination_label(best['algo'], best['proto']) + ' ' + mark:<14}"
                         f"{best['median_us']:>9.1f}{best['ratio']:>7.3f}{best['rounds_faster']:>6}/{rounds}"
-                        f"{100 * noise.loc[(op, size)]:>7.1f}%{rank:>12}")
+                        + (f"{100 * noise.loc[(op, size)]:>7.1f}%" if pd.notna(noise.loc[(op, size)]) else
+                           f"{'-':>8}") + f"{rank:>12}")
         text.append("")
     return "\n".join(text)
 
 
 # ---------------------------------------------------------------------------------------------
 
-def analyze(run, logging_run):
+def analyze(run, logging_run, allow_incomplete=False):
     run, logging_run = Path(run), Path(logging_run)
-    check_run_info(run, logging_run)
+    design = check_run_info(run, logging_run, allow_incomplete)
     info = job_info(run / "job-info.txt")
     logging_dir = logging_iteration(logging_run)
-    print(f"{run}: tuning run, {len(variant_dirs(run))} variant runs (rounds x variants); logging run {logging_run}")
-    choices = load_choices(run)
+    print(f"{run}: tuning run, {len(design.rounds)} round(s) x {len(design.variants)} variant(s); logging run "
+          f"{logging_run}")
+    for line in design.note():
+        print(line)
+    choices = load_choices(design)
     comm = logging_communicator(logging_dir)
     model = CostModel(nccl=nccl_version(info), table=model_table(logging_dir), comm=comm)
-    print(f"cost model: NCCL {model.nccl}, {comm}, NCCL chooses from "
-          f"{sorted(model.enabled)}")
-    check_communicator(run, choices, model.table, comm, nodes=len(info["gpus"]))
-    df = load_times(run)
+    print(f"cost model: NCCL {model.nccl}, {comm}, NCCL chooses from {sorted(model.enabled)}")
+    check_communicator(run, choices, model.table, comm, nodes=len(info["gpus"]), measured=design.measured)
+    df = load_times(run, design)
     bench = benchmark_times(df)
-    rounds = bench["round"].nunique()
     estimates = model_estimates(model, sorted(bench["size_bytes"].unique()))
+    incomplete = " (incomplete run)" if design.left_out else ""
 
-    text, problems = check_choices(run, choices, estimates, comm, logging_dir)
+    text, problems = check_choices(run, choices, estimates, model, logging_dir, design, info)
     (run / "choices.txt").write_text(text + "\n")
     print(text)
 
-    measured = measured_combinations(bench)
+    measured = measured_combinations(bench, design)
     comp = model_comparison(measured, estimates, choices)
-    text = comparison_text(comp, run, model, logging_dir)
+    text = comparison_text(comp, run, model, logging_dir, design)
     (run / "model_vs_measured.txt").write_text(text + "\n")
     print(text)
 
-    for name, fig, title in [
-            ("model_vs_measured.pdf", plot_model_overview(measured, comp), "NCCL's estimate vs. measured time"),
-            ("model_violins.pdf", plot_model_violins(measured, comp), "NCCL's estimate vs. measured time"),
-            ("round_consistency.pdf", plot_round_consistency(round_deviation(bench)), "consistency of the rounds"),
-    ]:
+    figures = [("model_vs_measured.pdf", lambda: plot_model_overview(measured, comp, design),
+                "NCCL's estimate vs. measured time"),
+               ("model_violins.pdf", lambda: plot_model_violins(measured, comp, design),
+                "NCCL's estimate vs. measured time")]
+    if len(design.rounds) >= 2:
+        figures.append(("round_consistency.pdf", lambda: plot_round_consistency(round_deviation(bench), design),
+                        "consistency of the rounds"))
+    else:  # one round (incomplete run): nothing to compare; no stale plot of an earlier analysis
+        print("round_consistency.pdf: only one round, not written")
+        (run / "round_consistency.pdf").unlink(missing_ok=True)
+    for name, plot, title in figures:
+        fig = plot()
         with plt.rc_context(pr.PLOT_STYLE):
-            fig.suptitle(f"{label(run)}: {title} (ncclbench)")
+            fig.suptitle(f"{label(run)}: {title} (ncclbench){incomplete}")
         fig.savefig(run / name, bbox_inches="tight")
         plt.close(fig)
 
     pvd = pinned_vs_default(measured, comp)
-    noise = noise_floor(bench, pvd)
-    fig = plot_pinned_vs_default(pvd, noise)
+    noise = noise_floor(bench, pvd, design)
+    fig = plot_pinned_vs_default(pvd, noise, design)
     with plt.rc_context(pr.PLOT_STYLE):
-        fig.suptitle(f"{label(run)}: pinned algorithm/protocol vs. NCCL's choice (ncclbench, {rounds} rounds)")
+        fig.suptitle(f"{label(run)}: pinned algorithm/protocol vs. NCCL's choice (ncclbench, "
+                     f"{_rounds(len(design.rounds))}){incomplete}")
     fig.savefig(run / "pinned_vs_default.pdf", bbox_inches="tight")
     plt.close(fig)
-    text = best_text(pvd, comp, noise, run, rounds)
+    text = best_text(pvd, comp, estimates, noise, run, design)
     (run / "best_vs_default.txt").write_text(text + "\n")
     print(text)
 
@@ -1131,10 +1375,13 @@ def main():
     parser.add_argument("--logging", type=Path, metavar="LOGGING_RUN",
                         help="logging run folder for NCCL's TUNING table (default: the newest in results/logging/ "
                              "that fits the tuning run)")
+    parser.add_argument("--allow-incomplete", action="store_true",
+                        help="analyse the largest complete part of a run some of whose variants failed or never ran "
+                             "(listed at the top of the text outputs)")
     args = parser.parse_args()
     run = choose_run(args.run, "tuning")
     logging_run = choose_run(args.logging, "logging", option="--logging") if args.logging else matching_logging_run(run)
-    analyze(run, logging_run)
+    analyze(run, logging_run, args.allow_incomplete)
 
 
 if __name__ == "__main__":

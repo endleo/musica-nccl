@@ -1,0 +1,53 @@
+INCOMPLETE RUN (--allow-incomplete): analysed rounds ['01'] x variants ['default', 'tree_ll']; left out:
+  variant ring_ll: leaves Broadcast no algorithm (NCCL_ALGO is set but does not name it: NCCL 2.32.3 then disables all its algorithms) (NCCL 2.32.3)
+  variant ring_ll128: leaves Broadcast no algorithm (NCCL_ALGO is set but does not name it: NCCL 2.32.3 then disables all its algorithms) (NCCL 2.32.3)
+  variant ring_simple: leaves Broadcast no algorithm (NCCL_ALGO is set but does not name it: NCCL 2.32.3 then disables all its algorithms) (NCCL 2.32.3)
+  01/tree_ll128: no profiler output (did not finish)
+  01/tree_simple: missing
+  01/ring_ll: missing
+  01/ring_ll128: missing
+  01/ring_simple: missing
+  02/(all variants): missing
+  03/(all variants): missing
+  not analysed: round 02, round 03, variant tree_ll128, variant tree_simple, variant ring_ll, variant ring_ll128, variant ring_simple
+
+NCCL's choice vs. the fastest measured combination (median over all rounds, us), tuning/leonardo-64323905
+ratio: fastest / NCCL's choice; rounds: in how many rounds it was faster (round medians); model rank: rank of the fastest by NCCL's estimate among the combinations NCCL chooses from (1 = NCCL's choice; off = NCCL does not choose it by itself, e.g. LL128 where NCCL disables it); = : the fastest is NCCL's choice itself
+noise: largest deviation between two runs of the same configuration in the same round (NCCL's own combination pinned vs. default; also other variants with NCCL's choice vs. default; - : NCCL's own combination not measured); * = faster in all rounds and by more than the noise
+
+AllReduce
+  size      NCCL choice     median  fastest          median  ratio  rounds   noise  model rank
+  8 B       Tree/LL           49.5  Tree/LL =          48.5  0.980     1/1    2.0%           1
+  16 B      Tree/LL           48.0  Tree/LL =          47.7  0.995     1/1    0.5%           1
+  32 B      Tree/LL           48.1  Tree/LL =          48.2  1.002     0/1    0.2%           1
+  64 B      Tree/LL           48.9  Tree/LL =          48.5  0.992     1/1    0.8%           1
+  128 B     Tree/LL           49.5  Tree/LL =          48.9  0.988     1/1    1.2%           1
+  256 B     Tree/LL           49.1  Tree/LL =          49.1  1.001     0/1    0.1%           1
+  512 B     Tree/LL           49.9  Tree/LL =          50.1  1.004     0/1    0.4%           1
+  1 KiB     Tree/LL           51.8  Tree/LL =          51.9  1.001     0/1    0.1%           1
+  2 KiB     Tree/LL           57.8  Tree/LL =          58.4  1.010     0/1    1.0%           1
+  4 KiB     Tree/LL           62.9  Tree/LL =          64.0  1.016     0/1    1.6%           1
+  8 KiB     Tree/LL           64.8  Tree/LL =          65.1  1.004     0/1    0.4%           1
+  16 KiB    Tree/LL           65.8  Tree/LL =          65.8  1.001     0/1    0.1%           1
+  32 KiB    Tree/LL           67.2  Tree/LL =          67.0  0.998     1/1    0.2%           1
+  64 KiB    Tree/LL           81.3  Tree/LL =          81.4  1.002     0/1    0.2%           1
+  128 KiB   Tree/LL          106.6  Tree/LL =         106.5  0.999     1/1    0.1%           1
+  256 KiB   Ring/LL          161.2  Tree/LL           157.4  0.976     1/1       -           3
+  512 KiB   Ring/LL          167.0  Tree/LL           201.8  1.208     0/1       -           3
+  1 MiB     Ring/LL          215.3  Tree/LL           338.4  1.572     0/1       -           3
+  1536 KiB  Ring/LL          354.1  Tree/LL           446.0  1.260     0/1       -           4
+  2 MiB     Tree/Simple      657.2  Tree/LL           552.4  0.841     1/1       -           4
+  3 MiB     Tree/Simple      871.4  Tree/LL           763.6  0.876     1/1       -           4
+  4 MiB     Tree/Simple     1051.4  Tree/LL           960.6  0.914     1/1       -           4
+  8 MiB     Tree/Simple     1221.1  Tree/LL          1739.4  1.425     0/1       -           4
+  16 MiB    Ring/Simple     1210.5  Tree/LL          3165.4  2.615     0/1       -           4
+  32 MiB    Ring/Simple     1885.2  Tree/LL          5882.6  3.120     0/1       -           4
+  64 MiB    Ring/Simple     3412.1  Tree/LL         11568.6  3.390     0/1       -           4
+  128 MiB   Ring/Simple     6014.1  Tree/LL         22344.3  3.715     0/1       -           4
+  256 MiB   Ring/Simple    10976.3  Tree/LL         43785.8  3.989     0/1       -           4
+  512 MiB   Ring/Simple    22537.4  Tree/LL         87466.4  3.881     0/1       -           4
+  1 GiB     Ring/Simple    44028.9  Tree/LL        174580.0  3.965     0/1       -           4
+
+Broadcast
+  (no pinned combination measured)
+

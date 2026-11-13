@@ -17,14 +17,17 @@ import pytest
 
 from conftest import REFERENCE, RESULTS, link_run, outputs, run_script
 
-# run -> (script, other runs it reads)
+# run -> (script, other runs it reads, further arguments)
 RUNS = {
-    "full/1863257": ("analyze_full.py", []),
-    "full/1874191": ("analyze_full.py", []),
-    "full/spark-20261104-173019": ("analyze_full.py", []),
-    "full/spark-20261104-192246": ("analyze_full.py", []),
-    "quick/1863239": ("analyze_full.py", []),
-    "tuning/1893400": ("analyze_tuning.py", ["logging/1889653"]),  # LOGGING_RUN: NCCL's TUNING table
+    "full/1863257": ("analyze_full.py", [], []),
+    "full/1874191": ("analyze_full.py", [], []),
+    "full/spark-20261104-173019": ("analyze_full.py", [], []),
+    "full/spark-20261104-192246": ("analyze_full.py", [], []),
+    "quick/1863239": ("analyze_full.py", [], []),
+    "tuning/1893400": ("analyze_tuning.py", ["logging/1889653"], []),  # logging run: NCCL's TUNING table
+    # NCCL 2.32.3's cost model, and an incomplete run (hung at tree_ll128, LL128 unsupported on Leonardo): only
+    # round 01 with default and tree_ll
+    "tuning/leonardo-64323905": ("analyze_tuning.py", ["logging/leonardo-64298074"], ["--allow-incomplete"]),
 }
 
 
@@ -58,7 +61,7 @@ def difference(path, reference, tmp_path):
 @pytest.mark.slow
 @pytest.mark.parametrize("run", RUNS)
 def test_outputs(run, tmp_path, request):
-    script, needs = RUNS[run]
+    script, needs, args = RUNS[run]
     if missing := [r for r in [run, *needs] if not (RESULTS / r).is_dir()]:
         pytest.skip(f"not in results/: {', '.join(missing)}")
     results = tmp_path / "results"
@@ -66,7 +69,7 @@ def test_outputs(run, tmp_path, request):
         link_run(RESULTS / r, results)
     copy = results / run
 
-    proc = run_script(script, copy, results=results)
+    proc = run_script(script, copy, *args, results=results)
     assert proc.returncode == 0, proc.stderr[-5000:]
     produced = outputs(copy)
     reference = REFERENCE / run

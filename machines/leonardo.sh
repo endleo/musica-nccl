@@ -8,6 +8,12 @@ CUDA_ARCH="80"
 # the NCCL module (2.22.3) is too old: build.sh builds this checkout into NCCL_HOME, same version as on the Sparks
 NCCL_TAG="v2.32.3-1"
 
+# NCCL disables LL128 here across nodes (logging run leonardo-64298074, NCCL 2.32.3): on A100 it needs the GPU-NIC
+# path of the graph to be PXB or closer (isLL128Enabled, src/tuning/cost_model.cc), and the Ring graph runs over PXN,
+# the Tree graph over PHB. Pinned anyway (NCCL_PROTO=...LL128 skips that check), tree_ll128 of tuning run
+# leonardo-64323905 hung until the job's time limit. Within one node (NVLink only) NCCL would enable it
+UNSUPPORTED_PROTOCOLS=(LL128)
+
 # not for now: there is no protobuf module (CoMMA's build needs rust, libclang and protobuf)
 BUILD_COMMA=false
 

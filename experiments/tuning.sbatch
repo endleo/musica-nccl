@@ -24,6 +24,9 @@ declare -A NCCLBENCH_TESTS=([all_reduce_bench]=ncclAllReduce [broadcast_bench]=n
 NCCLBENCH_ARGS="--sizes $(powers_of_two 8 $((2**20))) 1572864 $((2**21)) 3145728 $(powers_of_two $((2**22)) $((2**30)))"
 NCCLBENCH_ARGS+=" --data-type float --blocking --csv --warmups 5 --iterations 50"
 ROUNDS=3
+# one benchmark run normally takes under a minute (16 nodes on MUSICA, 8 on Leonardo); a hanging one (Leonardo,
+# pinned LL128) fails after this instead of using up the job
+STEP_TIMEOUT=10m
 
 # Syntax (NCCL 2.27, src/graph/tuning.cc): "<list>" for all operations, "<op>:<list>" for one operation (the others
 # keep their default), entries separated by ";", "^" excludes, e.g. NCCL_PROTO="^LL128;allreduce:LL128". Pin per
@@ -32,16 +35,22 @@ ROUNDS=3
 # Algorithms: Tree Ring CollNetDirect CollNetChain NVLS NVLSTree PAT; protocols: LL LL128 Simple
 # Available on MUSICA (TUNING table of run 1889653, everything else 0): AllReduce Tree and Ring, Broadcast Ring, each
 # with LL, LL128 and Simple. LL128 is enabled by default there, so pinning it does not override NCCL's hardware check.
+# Where NCCL disables a protocol (UNSUPPORTED_PROTOCOLS of the machine file, e.g. LL128 on Leonardo), experiment.sh
+# skips the variants that pin it; analysis/analyze_tuning.py takes the variants from job-info.txt.
 # Every benchmark is its own process, so the Ring variants also pin Broadcast's protocol; in the Tree variants
 # Broadcast runs with NCCL's choice (extra default samples).
+# NCCL 2.32.3 (src/tuning/cost_model.cc): a non-empty NCCL_ALGO first disables every algorithm of every operation,
+# and an operation NCCL_PROTO names then only gets the algorithms NCCL_ALGO lists for it. So the Ring variants list
+# broadcast:ring as well (without it, Broadcast has no algorithm: "No algorithm/protocol ... available"); in 2.27.7
+# an operation NCCL_ALGO does not name keeps all algorithms, so this changes nothing there.
 VARIANTS=(default tree_ll tree_ll128 tree_simple ring_ll ring_ll128 ring_simple)
 declare -A VARIANT_ENV=(
     [tree_ll]="NCCL_ALGO=allreduce:tree NCCL_PROTO=allreduce:LL"
     [tree_ll128]="NCCL_ALGO=allreduce:tree NCCL_PROTO=allreduce:LL128"
     [tree_simple]="NCCL_ALGO=allreduce:tree NCCL_PROTO=allreduce:Simple"
-    [ring_ll]="NCCL_ALGO=allreduce:ring NCCL_PROTO=allreduce:LL;broadcast:LL"
-    [ring_ll128]="NCCL_ALGO=allreduce:ring NCCL_PROTO=allreduce:LL128;broadcast:LL128"
-    [ring_simple]="NCCL_ALGO=allreduce:ring NCCL_PROTO=allreduce:Simple;broadcast:Simple"
+    [ring_ll]="NCCL_ALGO=allreduce:ring;broadcast:ring NCCL_PROTO=allreduce:LL;broadcast:LL"
+    [ring_ll128]="NCCL_ALGO=allreduce:ring;broadcast:ring NCCL_PROTO=allreduce:LL128;broadcast:LL128"
+    [ring_simple]="NCCL_ALGO=allreduce:ring;broadcast:ring NCCL_PROTO=allreduce:Simple;broadcast:Simple"
 )
 
 run_experiment

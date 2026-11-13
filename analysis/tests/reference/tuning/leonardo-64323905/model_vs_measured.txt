@@ -1,0 +1,85 @@
+INCOMPLETE RUN (--allow-incomplete): analysed rounds ['01'] x variants ['default', 'tree_ll']; left out:
+  variant ring_ll: leaves Broadcast no algorithm (NCCL_ALGO is set but does not name it: NCCL 2.32.3 then disables all its algorithms) (NCCL 2.32.3)
+  variant ring_ll128: leaves Broadcast no algorithm (NCCL_ALGO is set but does not name it: NCCL 2.32.3 then disables all its algorithms) (NCCL 2.32.3)
+  variant ring_simple: leaves Broadcast no algorithm (NCCL_ALGO is set but does not name it: NCCL 2.32.3 then disables all its algorithms) (NCCL 2.32.3)
+  01/tree_ll128: no profiler output (did not finish)
+  01/tree_simple: missing
+  01/ring_ll: missing
+  01/ring_ll128: missing
+  01/ring_simple: missing
+  02/(all variants): missing
+  03/(all variants): missing
+  not analysed: round 02, round 03, variant tree_ll128, variant tree_simple, variant ring_ll, variant ring_ll128, variant ring_simple
+
+NCCL's estimate vs. measured ncclbench time per call [us], tuning/leonardo-64323905, all rounds together
+estimate: NCCL 2.32.3's cost model with the TUNING table of logging run leonardo-64298074; pct: share of the measured calls faster than the estimate (0 = the estimate is below every call); est/med: estimate / measured median; default: NCCL's choice, with the estimate of the combination it used
+not chosen by NCCL by itself (only pinned): AllReduce Ring/LL128, AllReduce Tree/LL128, Broadcast Ring/LL128
+
+AllReduce
+size                            NCCL choice                           Tree/LL
+           estimate    median   pct est/med  estimate    median   pct est/med
+8 B            40.4      49.5     0    0.82      40.4      48.5     0    0.83
+16 B           40.4      48.0     0    0.84      40.4      47.7     0    0.85
+32 B           40.4      48.1     0    0.84      40.4      48.2     0    0.84
+64 B           40.4      48.9     0    0.83      40.4      48.5     0    0.83
+128 B          40.4      49.5     0    0.82      40.4      48.9     0    0.83
+256 B          40.4      49.1     0    0.82      40.4      49.1     0    0.82
+512 B          40.5      49.9     0    0.81      40.5      50.1     0    0.81
+1 KiB          40.6      51.8     0    0.78      40.6      51.9     0    0.78
+2 KiB          40.8      57.8     0    0.71      40.8      58.4     0    0.70
+4 KiB          41.4      62.9     0    0.66      41.4      64.0     0    0.65
+8 KiB          42.4      64.8     0    0.65      42.4      65.1     0    0.65
+16 KiB         44.4      65.8     0    0.68      44.4      65.8     0    0.68
+32 KiB         48.5      67.2     0    0.72      48.5      67.0     0    0.72
+64 KiB         59.2      81.3     0    0.73      59.2      81.4     0    0.73
+128 KiB        85.6     106.6     0    0.80      85.6     106.5     0    0.80
+256 KiB       117.4     161.2     0    0.73     153.4     157.4     4    0.97
+512 KiB       142.3     167.0     0    0.85     266.4     201.8    98    1.32
+1 MiB         192.3     215.3     0    0.89     402.0     338.4    82    1.19
+1536 KiB      242.2     354.1     0    0.68     582.8     446.0    96    1.31
+2 MiB         274.6     657.2     0    0.42     643.0     552.4   100    1.16
+3 MiB         353.6     871.4     0    0.41     944.3     763.6   100    1.24
+4 MiB         387.5    1051.4     0    0.37    1073.5     960.6    82    1.12
+8 MiB         590.9    1221.1     0    0.48    1848.3    1739.4    78    1.06
+16 MiB       1191.1    1210.5     2    0.98    3254.4    3165.4    78    1.03
+32 MiB       1867.6    1885.2    18    0.99    5825.6    5882.6    22    0.99
+64 MiB       3220.6    3412.1     0    0.94   11610.9   11568.6    52    1.00
+128 MiB      5926.6    6014.1     2    0.99   23181.4   22344.3    92    1.04
+256 MiB     11338.7   10976.3    84    1.03   46322.4   43785.8    94    1.06
+512 MiB     22162.7   22537.4    34    0.98   92604.4   87466.4    82    1.06
+1 GiB       43810.7   44028.9    46    1.00  185168.3  174580.0    98    1.06
+
+Broadcast
+size                            NCCL choice
+           estimate    median   pct est/med
+8 B            93.0      60.8    86    1.53
+16 B           93.0      59.4    98    1.57
+32 B           93.0      59.8    96    1.55
+64 B           93.0      60.5    98    1.54
+128 B          93.0      61.7    96    1.51
+256 B          93.0      62.6   100    1.49
+512 B          93.0      63.8    92    1.46
+1 KiB          93.1      68.3   100    1.36
+2 KiB          93.1      76.2   100    1.22
+4 KiB          93.2      87.4    96    1.07
+8 KiB          93.4     109.5     0    0.85
+16 KiB         93.8     148.1     0    0.63
+32 KiB         94.6     200.5     0    0.47
+64 KiB         96.2     168.6     0    0.57
+128 KiB        99.4     172.5     0    0.58
+256 KiB       105.9     178.8     0    0.59
+512 KiB       118.7     185.8     0    0.64
+1 MiB         144.4     226.9     0    0.64
+1536 KiB      170.1     266.9     0    0.64
+2 MiB         195.8     287.5     0    0.68
+3 MiB         247.2     351.5     0    0.70
+4 MiB         298.6     414.8     0    0.72
+8 MiB         504.2     661.1     0    0.76
+16 MiB        805.9    2260.9     0    0.36
+32 MiB       1155.5    2596.3     0    0.45
+64 MiB       1854.5    3311.5     0    0.56
+128 MiB      3252.6    4702.9     0    0.69
+256 MiB      6048.8    7527.4     0    0.80
+512 MiB     11641.2   13143.5     0    0.89
+1 GiB       22826.0   24239.8     0    0.94
+
